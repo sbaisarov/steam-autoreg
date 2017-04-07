@@ -15,23 +15,23 @@ from sms_services import *
 #                    level=logging.DEBUG,
 #                    format='%(asctime)s - %(levelname)s - %(message)s')
 
-asd bkb
 
 class MainWindow():
 
     def __init__(self, parent):
 
         self.filename = None
-        self.manifest_path = None
+        self.mailboxes_path = None
         self.accounts = []
+        self.mailboxes = []
         self.parent = parent
         self.steamreg = SteamRegger()
 
         frame = Frame(self.parent)
         menubar = Menu(parent)
         parent['menu'] = menubar
-        menubar.add_command(label="Открыть...", command=self.file_open)
-        menubar.add_command(label="Указать manifest", command=self.manifest_open)
+        menubar.add_command(label="Указать данные от аккаунтов", command=self.file_open)
+        menubar.add_command(label="Указать данные от почт", command=self.mailboxes_file_open)
 
         self.onlinesim_api_key = StringVar()
         self.smsactivate_api_key = StringVar()
@@ -296,7 +296,7 @@ class MainWindow():
         dir = (os.path.dirname(self.filename)
                if self.filename is not None else '.')
         filename = askopenfilename(
-                    title='Логин:пасс аккаунтов',
+                    title='логин:пасс аккаунтов',
                     initialdir=dir,
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
@@ -318,31 +318,48 @@ class MainWindow():
             self.parent.title('Accounts - {}'.format(
                               os.path.basename(self.filename)))
             self.status_bar.set('Загружен файл: {}'.format(
-                                        os.path.basename(self.filename)))
+                                os.path.basename(self.filename)))
         except EnvironmentError as err:
             showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
                                     self.filename, err), parent=self.parent)
 
 
-    def manifest_open(self):
-        dir = (os.path.dirname(self.manifest_path)
-               if self.manifest_path is not None else '.')
-        manifest = askopenfilename(
-                    title='SDA manifest',
+    def mailboxes_file_open(self):
+        dir = (os.path.dirname(self.mailboxes_path)
+               if self.mailboxes_path is not None else '.')
+        mailboxes_path = askopenfilename(
+                    title='логин:пасс почт',
                     initialdir=dir,
-                    filetypes=[('Manifest', '*.json')],
-                    defaultextension='.json', parent=self.parent)
-        if manifest:
-            return self.load_manifest(manifest)
+                    filetypes=[('Text file', '*.txt')],
+                    defaultextension='.txt', parent=self.parent)
+        if mailboxes_path:
+            return self.mailboxes_path(mailboxes_path)
 
 
-    def load_manifest(self, manifest):
-        self.manifest_path = manifest
-        with open(manifest, 'r') as f:
-            self.manifest_data = json.load(f)
-
+    def load_mailboxes(self, mailboxes_path):
+        self.mailboxes_path = mailboxes_path
+        self.mailboxes.clear()
+        try:
+            with open(mailboxes_path, 'r') as f:
+                for item in f.readlines():
+                    email_data = item.rstrip().split(':')
+                    self.mailboxes.append(acc_data)
+            self.parent.title('Accounts - {}'.format(
+                              os.path.basename(self.mailboxes_path)))
+            self.status_bar.set('Загружен файл: {}'.format(
+                                os.path.basename(self.mailboxes_path)))
+        except EnvironmentError as err:
+            showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
+                        self.mailboxes_path, err), parent=self.parent)
 
 root = Tk()
 window = MainWindow(root)
 root.title('Mobile Guard Authenticator')
 root.mainloop()
+
+
+'http://steamcommunity.com/actions/AddFriendAjax'
+
+sessionID:0f5bbfcfedfb1b3c4e7f8458
+steamid:76561198218640297
+accept_invite:0
