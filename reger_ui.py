@@ -15,6 +15,8 @@ from sms_services import *
 #                    level=logging.DEBUG,
 #                    format='%(asctime)s - %(levelname)s - %(message)s')
 
+asd bkb
+
 class MainWindow():
 
     def __init__(self, parent):
