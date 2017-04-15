@@ -2,12 +2,16 @@ from tkinter import *
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
 import logging
+import urllib
 import os
 import datetime
 import json
+import time
 import traceback
 import threading
 
+from steampy.guard import generate_one_time_code
+import steampy.utils
 from steamreg import *
 from sms_services import *
 
@@ -30,8 +34,8 @@ class MainWindow():
         frame = Frame(self.parent)
         menubar = Menu(parent)
         parent['menu'] = menubar
-        menubar.add_command(label="Указать данные от аккаунтов", command=self.file_open)
         menubar.add_command(label="Указать данные от почт", command=self.mailboxes_file_open)
+        menubar.add_command(label="Указать данные от аккаунтов", command=self.file_open)
 
         self.onlinesim_api_key = StringVar()
         self.smsactivate_api_key = StringVar()
@@ -86,9 +90,6 @@ class MainWindow():
         if not self.filename:
             showwarning("Ошибка", "Не указан файл с данными от аккаунтов", parent=self.parent)
             return
-        if not self.manifest_path:
-            showwarning("Ошибка", "Не указан manifest файл от SDA", parent=self.parent)
-            return
         try:
             numbers_per_account = int(self.numbers_per_account.get())
             if numbers_per_account <= 0:
@@ -108,6 +109,8 @@ class MainWindow():
             self.log_box.insert(END, 'Номер: ' + number)
             for acc_data in self.accounts:
                 login, passwd, email, email_passwd = acc_data
+                login, passwd = self.steamreg.create_account()
+                print(login, passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd, email, email_passwd)
@@ -137,10 +140,8 @@ class MainWindow():
                     self.log_box.insert(END, 'SMS код не подошел либо не был получен, '
                                              'делаю повторный запрос...')
 
-
                 while True:
                     self.status_bar.set('Делаю запрос на привязку аутентификатора...')
-                    time.sleep(3)
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
@@ -154,7 +155,14 @@ class MainWindow():
                     self.log_box.insert(END, 'СМС код не подошел либо не был получен, '
                                              'делаю повторный запрос...')
 
-                self.save_data(acc_data, number, mobguard_data)
+                self.change_mailbox(steam_client, email, email_passwd, mobguard_data['shared_secret'])
+                self.status_bar.set('Активирую аккаунт...')
+                self.activate_steam_account(steam_client, email)
+                self.status_bar.set('Добавляю в друзья главный аккаунт...')
+                self.add_main_account_to_friendslist(steam_client)
+
+                self.save_data(mobguard_data)
+                self.log_box.insert(END, 'Guard успешно привязан: ' + login)
                 ctr += 1
 
         except OnlineSimError as err:
@@ -179,9 +187,6 @@ class MainWindow():
         if not self.filename:
             showwarning("Ошибка", "Не указан файл с данными от аккаунтов", parent=self.parent)
             return
-        if not self.manifest_path:
-            showwarning("Ошибка", "Не указан manifest файл от SDA", parent=self.parent)
-            return
         sms_service = SmsActivateApi(smsactivate_api_key)
         ctr = 0
         try:
@@ -198,11 +203,12 @@ class MainWindow():
         try:
             id, number = sms_service.get_number()
             self.log_box.insert(END, 'Номер: ' + number)
-            for acc_data in self.accounts:
+            for acc_data, email_data in zip(self.accounts, self.mailboxes):
                 login, passwd, email, email_passwd = acc_data
-                # login, passwd = self.steamreg.create_account()
-                # print(login, passwd)
-                self.status_bar.set('Привязываю Guard к аккаунту: ' + login)
+                email, email_passwd = email_data
+                login, passwd = self.steamreg.create_account()
+                print(login, passwd)
+                self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd, email, email_passwd)
                 if ctr == numbers_per_account:
@@ -231,7 +237,6 @@ class MainWindow():
 
                 while True:
                     self.status_bar.set('Делаю запрос на привязку аутентификатора...')
-                    time.sleep(3)
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
                     sms_service.set_status(id, status)
                     self.status_bar.set('Жду SMS код...')
@@ -245,8 +250,14 @@ class MainWindow():
                         break
                     self.log_box.insert(END, 'СМС код не подошел, '
                                              'делаю повторный запрос...')
+                self.change_mailbox(steam_client, email, email_passwd, mobguard_data)
+                self.status_bar.set('Активирую аккаунт...')
+                self.activate_steam_account(steam_client, email)
+                self.status_bar.set('Добавляю в друзья главный аккаунт...')
+                self.add_main_account_to_friendslist(steam_client)
 
-                self.save_data(acc_data, number, mobguard_data)
+                self.save_data(mobguard_data)
+                self.log_box.insert(END, 'Guard успешно привязан: ' + login)
                 ctr += 1
         except SteamAuthError as err:
             self.log_box.insert(END, err)
@@ -269,27 +280,11 @@ class MainWindow():
             threading.Thread(target=func).start()
 
 
-    def save_data(self, acc_data, number, mobguard_data):
-        login = acc_data[0]
-        #acc_dir = os.path.join(os.path.dirname(self.filename), login)
-        #os.makedirs(acc_dir)
-        #txt_path = os.path.join(acc_dir, login + '.txt')
-        dir = os.path.dirname(self.manifest_path)
+    def save_data(self, mobguard_data):
         steamid = mobguard_data['Session']['SteamID']
-        mafile_path = os.path.join(dir, steamid + '.maFile')
-        data = {
-        "encryption_iv": None,
-        "encryption_salt": None,
-        "filename": steamid + '.maFile',
-        "steamid": int(steamid)
-        }
-        self.manifest_data["entries"].append(data)
-        with open(mafile_path, 'w') as f1, open(self.manifest_path, 'w') as f2:
-            #f1.write('{}:{}:{}:{}\nДата привязки Guard: {}\nPhone: {}'.format(
-                     #*acc_data, str(datetime.date.today()), number))
-            json.dump(mobguard_data, f1)
-            json.dump(self.manifest_data, f2)
-        self.log_box.insert(END, 'Guard успешно привязан: ' + login)
+        mafile_path = os.path.join(os.path.dirname(self.filename), steamid + '.maFile')
+        with open(mafile_path, 'w') as f:
+            json.dump(mobguard_data, f)
 
 
     def file_open(self):
@@ -309,8 +304,8 @@ class MainWindow():
         self.accounts.clear()
         try:
             with open(self.filename, 'r') as f:
-                for item in f.readlines():
-                    acc_data = item.rstrip().split(':')
+                for acc_item in f.readlines():
+                    acc_data = acc_item.rstrip().split(':')
                     if len(acc_data) == 2:
                         acc_data += ['', '']
                     self.accounts.append(acc_data)
@@ -333,7 +328,7 @@ class MainWindow():
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
         if mailboxes_path:
-            return self.mailboxes_path(mailboxes_path)
+            return self.load_mailboxes(mailboxes_path)
 
 
     def load_mailboxes(self, mailboxes_path):
@@ -343,7 +338,7 @@ class MainWindow():
             with open(mailboxes_path, 'r') as f:
                 for item in f.readlines():
                     email_data = item.rstrip().split(':')
-                    self.mailboxes.append(acc_data)
+                    self.mailboxes.append(email_data)
             self.parent.title('Accounts - {}'.format(
                               os.path.basename(self.mailboxes_path)))
             self.status_bar.set('Загружен файл: {}'.format(
@@ -352,14 +347,101 @@ class MainWindow():
             showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
                         self.mailboxes_path, err), parent=self.parent)
 
+
+    def change_mailbox(self, steam_client, email, email_passwd, mobguard_data):
+        steam_client.session.cookies.clear()
+        self.status_bar.set('Делаю повторную авторизацию в аккаунт...')
+        steam_client.login(steam_client.login_name, steam_client.password, mobguard_data)
+        steam_client.session.get('https://help.steampowered.com/en/')
+        sessionid = steam_client.session.cookies.get('sessionid', domain='help.steampowered.com')
+        url = 'https://help.steampowered.com/en/wizard/HelpChangeEmail?redir=store/account/'
+        resp = steam_client.session.get(url)
+        session_data = json.loads(urllib.parse.unquote(resp.cookies['steamHelpHistory']))[2]
+        process_session_id = re.search(r'\?s=(.+?)&', session_data['url']).group(1)
+
+        data = {
+        'sessionid': sessionid,
+        'wizard_ajax': '1',
+        's': process_session_id,
+        'method': '8'
+        }
+        r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxSendAccountRecoveryCode',
+                                      data=data)
+        print(r.json())
+        if not r.json()['success']:
+            raise Exception('Ошибка во время выполнения запроса AjaxSendAccountRecoveryCode:', r.text)
+
+        #timestamp = int(time.time()) + 30
+        resp = requests.post('https://api.steampowered.com/ITwoFactorService/QueryTime/v1/').json()
+        timestamp = int(resp['response']['server_time'])
+        code = generate_one_time_code(mobguard_data['shared_secret'], timestamp)
+        params = {
+        'code': code,
+        's': process_session_id,
+        'reset': '2',
+        'lost': '0',
+        'method': '8',
+        'issueid': '409',
+        'sessionid': sessionid,
+        'wizard_ajax': '1'
+        }
+        r = steam_client.session.get('https://help.steampowered.com/en/wizard/AjaxVerifyAccountRecoveryCode', params=params)
+        print(r.text)
+
+        account_id = steampy.utils.steam_id_to_account_id(steam_client.steamid)
+        data = {
+        'sessionid': sessionid,
+        'wizard_ajax': '1',
+        's': process_session_id,
+        'account': account_id,
+        'email': email
+        }
+        r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryChangeEmail/', data=data)
+        print(r.text)
+
+        self.status_bar.set('Жду код из письма...')
+        subject = 'Your Steam account: Email address change request'
+        email_code = steampy.utils.fetch_emaiL_code(email, email_passwd, subject)
+        data = {
+        'sessionid': sessionid,
+        'wizard_ajax': '1',
+        's': process_session_id,
+        'account': account_id,
+        'email': email,
+        'email_change_code': email_code
+        }
+        steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryConfirmChangeEmail/', data=data)
+
+    @staticmethod
+    def activate_steam_account(steam_client, email):
+        sessionid = steam_client.get_session_id()
+        url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
+        data = {
+        'sessionID': sessionid,
+        'type': 'profileSave',
+        'personaName': email.partition('@')[0],
+        'summary': 'No information given.',
+        'primary_group_steamid': '0'
+        }
+        steam_client.session.post(url, data=data)
+
+
+    @staticmethod
+    def add_main_account_to_friendslist(steam_client):
+        sessionid = steam_client.get_session_id()
+        url = 'http://steamcommunity.com/actions/AddFriendAjax'
+        data = {
+        'sessionID': sessionid,
+        'steamid': '76561198218640297',
+        'accept_invite': ''
+        }
+        steam_client.session.post(url, data=data)
+
+
+
+
 root = Tk()
 window = MainWindow(root)
 root.title('Mobile Guard Authenticator')
 root.mainloop()
 
-
-'http://steamcommunity.com/actions/AddFriendAjax'
-
-sessionID:0f5bbfcfedfb1b3c4e7f8458
-steamid:76561198218640297
-accept_invite:0
