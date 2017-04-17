@@ -109,7 +109,6 @@ class MainWindow():
             self.log_box.insert(END, 'Номер: ' + number)
             for acc_data in self.accounts:
                 login, passwd, email, email_passwd = acc_data
-                login, passwd = self.steamreg.create_account()
                 print(login, passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
@@ -141,7 +140,7 @@ class MainWindow():
                                              'делаю повторный запрос...')
 
                 while True:
-                    self.status_bar.set('Делаю запрос на привязку аутентификатора...')
+                    self.status_bar.set('Делаю запрос на привязку гуарда...')
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
@@ -206,7 +205,6 @@ class MainWindow():
             for acc_data, email_data in zip(self.accounts, self.mailboxes):
                 login, passwd, email, email_passwd = acc_data
                 email, email_passwd = email_data
-                login, passwd = self.steamreg.create_account()
                 print(login, passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
@@ -236,7 +234,7 @@ class MainWindow():
                                              'делаю повторный запрос...')
 
                 while True:
-                    self.status_bar.set('Делаю запрос на привязку аутентификатора...')
+                    self.status_bar.set('Делаю запрос на привязку гуарда...')
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
                     sms_service.set_status(id, status)
                     self.status_bar.set('Жду SMS код...')
@@ -371,22 +369,30 @@ class MainWindow():
         if not r.json()['success']:
             raise Exception('Ошибка во время выполнения запроса AjaxSendAccountRecoveryCode:', r.text)
 
-        #timestamp = int(time.time()) + 30
-        resp = requests.post('https://api.steampowered.com/ITwoFactorService/QueryTime/v1/').json()
-        timestamp = int(resp['response']['server_time'])
-        code = generate_one_time_code(mobguard_data['shared_secret'], timestamp)
-        params = {
-        'code': code,
-        's': process_session_id,
-        'reset': '2',
-        'lost': '0',
-        'method': '8',
-        'issueid': '409',
-        'sessionid': sessionid,
-        'wizard_ajax': '1'
-        }
-        r = steam_client.session.get('https://help.steampowered.com/en/wizard/AjaxVerifyAccountRecoveryCode', params=params)
-        print(r.text)
+        second_attempt = False
+        url = 'https://api.steampowered.com/ITwoFactorService/QueryTime/v1/'
+        while True:
+            resp = requests.post(url, data={'steamid': 0}).json()
+            timestamp = int(resp['response']['server_time'])
+            code = generate_one_time_code(mobguard_data['shared_secret'], timestamp)
+            print(code)
+            params = {
+            'code': code,
+            's': process_session_id,
+            'reset': '2',
+            'lost': '0',
+            'method': '8',
+            'issueid': '409',
+            'sessionid': sessionid,
+            'wizard_ajax': '1'
+            }
+            resp = steam_client.session.get('https://help.steampowered.com/en/wizard/AjaxVerifyAccountRecoveryCode', params=params)
+            print(resp.text)
+            if resp.json()['errorMsg'] and not second_attempt:
+                time.sleep(30 - timestamp % 30)
+                second_attempt = True
+                continue
+            break
 
         account_id = steampy.utils.steam_id_to_account_id(steam_client.steamid)
         data = {
@@ -410,7 +416,8 @@ class MainWindow():
         'email': email,
         'email_change_code': email_code
         }
-        steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryConfirmChangeEmail/', data=data)
+        r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryConfirmChangeEmail/', data=data)
+        print(r.text)
 
     @staticmethod
     def activate_steam_account(steam_client, email):
