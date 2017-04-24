@@ -107,9 +107,10 @@ class MainWindow():
             self.status_bar.set('Запрашиваю номер...')
             number = sms_service.get_number(tzid)
             self.log_box.insert(END, 'Номер: ' + number)
-            for acc_data in self.accounts:
+            for acc_data, email_data in zip(self.accounts, self.mailboxes):
                 login, passwd, email, email_passwd = acc_data
-                print(login, passwd)
+                email, email_passwd = email_data
+                print(login, passwd, email, email_passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd, email, email_passwd)
@@ -126,7 +127,7 @@ class MainWindow():
 
                 while True:
                     self.status_bar.set('Делаю запрос на добавление номера...')
-                    self.steamreg.steam_addphone_request(steam_client, number)
+                    is_number_valid = self.steamreg.steam_addphone_request(steam_client, number)
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
                     is_repeated = True
@@ -154,14 +155,15 @@ class MainWindow():
                     self.log_box.insert(END, 'СМС код не подошел либо не был получен, '
                                              'делаю повторный запрос...')
 
-                self.change_mailbox(steam_client, email, email_passwd, mobguard_data['shared_secret'])
+                self.save_data(mobguard_data)
+
+                self.change_mailbox(steam_client, email, email_passwd, mobguard_data)
                 self.status_bar.set('Активирую аккаунт...')
                 self.activate_steam_account(steam_client, email)
                 self.status_bar.set('Добавляю в друзья главный аккаунт...')
-                self.add_main_account_to_friendslist(steam_client)
-
-                self.save_data(mobguard_data)
+                # self.add_main_account_to_friendslist(steam_client)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
+
                 ctr += 1
 
         except OnlineSimError as err:
@@ -248,15 +250,17 @@ class MainWindow():
                         break
                     self.log_box.insert(END, 'СМС код не подошел, '
                                              'делаю повторный запрос...')
+                self.save_data(mobguard_data)
+
                 self.change_mailbox(steam_client, email, email_passwd, mobguard_data)
                 self.status_bar.set('Активирую аккаунт...')
                 self.activate_steam_account(steam_client, email)
                 self.status_bar.set('Добавляю в друзья главный аккаунт...')
-                self.add_main_account_to_friendslist(steam_client)
-
-                self.save_data(mobguard_data)
+                # self.add_main_account_to_friendslist(steam_client)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
+
                 ctr += 1
+
         except SteamAuthError as err:
             self.log_box.insert(END, err)
         except SteamCaptchaError as err:
@@ -308,8 +312,6 @@ class MainWindow():
                         acc_data += ['', '']
                     self.accounts.append(acc_data)
 
-            self.parent.title('Accounts - {}'.format(
-                              os.path.basename(self.filename)))
             self.status_bar.set('Загружен файл: {}'.format(
                                 os.path.basename(self.filename)))
         except EnvironmentError as err:
@@ -337,8 +339,6 @@ class MainWindow():
                 for item in f.readlines():
                     email_data = item.rstrip().split(':')
                     self.mailboxes.append(email_data)
-            self.parent.title('Accounts - {}'.format(
-                              os.path.basename(self.mailboxes_path)))
             self.status_bar.set('Загружен файл: {}'.format(
                                 os.path.basename(self.mailboxes_path)))
         except EnvironmentError as err:
@@ -350,6 +350,7 @@ class MainWindow():
         steam_client.session.cookies.clear()
         self.status_bar.set('Делаю повторную авторизацию в аккаунт...')
         steam_client.login(steam_client.login_name, steam_client.password, mobguard_data)
+        self.status_bar.set('Начинаю менять почту...')
         steam_client.session.get('https://help.steampowered.com/en/')
         sessionid = steam_client.session.cookies.get('sessionid', domain='help.steampowered.com')
         url = 'https://help.steampowered.com/en/wizard/HelpChangeEmail?redir=store/account/'
@@ -407,7 +408,7 @@ class MainWindow():
 
         self.status_bar.set('Жду код из письма...')
         subject = 'Your Steam account: Email address change request'
-        email_code = steampy.utils.fetch_emaiL_code(email, email_passwd, subject)
+        email_code = steampy.utils.fetch_emaiL_code(email, email_passwd, steam_client.login_name, subject)
         data = {
         'sessionid': sessionid,
         'wizard_ajax': '1',
@@ -445,10 +446,8 @@ class MainWindow():
         steam_client.session.post(url, data=data)
 
 
-
-
 root = Tk()
 window = MainWindow(root)
-root.title('Mobile Guard Authenticator')
+root.title('Steam Auto Authenticator v0.2')
 root.mainloop()
 
