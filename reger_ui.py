@@ -109,6 +109,7 @@ class MainWindow():
             self.log_box.insert(END, 'Номер: ' + number)
             for acc_data, email_data in zip(self.accounts, self.mailboxes):
                 login, passwd, email, email_passwd = acc_data
+                login, passwd = self.steamreg.create_account()
                 email, email_passwd = email_data
                 print(login, passwd, email, email_passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
@@ -373,8 +374,9 @@ class MainWindow():
         second_attempt = False
         url = 'https://api.steampowered.com/ITwoFactorService/QueryTime/v1/'
         while True:
-            resp = requests.post(url, data={'steamid': 0}).json()
-            timestamp = int(resp['response']['server_time'])
+            # resp = requests.post(url, data={'steamid': 0}).json()
+            # timestamp = int(resp['response']['server_time'])
+            timestamp = int(time.time())
             code = generate_one_time_code(mobguard_data['shared_secret'], timestamp)
             print(code)
             params = {
@@ -408,7 +410,7 @@ class MainWindow():
 
         self.status_bar.set('Жду код из письма...')
         subject = 'Your Steam account: Email address change request'
-        email_code = steampy.utils.fetch_emaiL_code(email, email_passwd, steam_client.login_name, subject)
+        email_code = steampy.utils.fetch_emaiL_code_imap(email, email_passwd, steam_client.login_name, subject)
         data = {
         'sessionid': sessionid,
         'wizard_ajax': '1',
