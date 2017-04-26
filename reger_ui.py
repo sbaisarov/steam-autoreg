@@ -320,32 +320,6 @@ class MainWindow():
                                     self.filename, err), parent=self.parent)
 
 
-    def mailboxes_file_open(self):
-        dir = (os.path.dirname(self.mailboxes_path)
-               if self.mailboxes_path is not None else '.')
-        mailboxes_path = askopenfilename(
-                    title='логин:пасс почт',
-                    initialdir=dir,
-                    filetypes=[('Text file', '*.txt')],
-                    defaultextension='.txt', parent=self.parent)
-        if mailboxes_path:
-            return self.load_mailboxes(mailboxes_path)
-
-
-    def load_mailboxes(self, mailboxes_path):
-        self.mailboxes_path = mailboxes_path
-        self.mailboxes.clear()
-        try:
-            with open(mailboxes_path, 'r') as f:
-                for item in f.readlines():
-                    email_data = item.rstrip().split(':')
-                    self.mailboxes.append(email_data)
-            self.status_bar.set('Загружен файл: {}'.format(
-                                os.path.basename(self.mailboxes_path)))
-        except EnvironmentError as err:
-            showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
-                        self.mailboxes_path, err), parent=self.parent)
-
 
     def change_mailbox(self, steam_client, email, email_passwd, mobguard_data):
         steam_client.session.cookies.clear()
@@ -446,6 +420,9 @@ class MainWindow():
         'accept_invite': ''
         }
         steam_client.session.post(url, data=data)
+
+    def fetch_email_code():
+
 
 
 root = Tk()
