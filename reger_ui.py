@@ -410,7 +410,8 @@ class MainWindow():
 
     @staticmethod
     def generate_mailbox():
-        ws = create_connection('wss://dropmail.me/websocket')
+        ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
+        ws = create_connection('wss://dropmail.me/websocket', sslopt=ssl_option)
         mailbox = ws.recv().partition(':')[0].lstrip('A')
         ws.recv() # skip the message with domains
         return mailbox, ws
