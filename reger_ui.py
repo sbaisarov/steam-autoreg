@@ -10,6 +10,8 @@ import time
 import traceback
 import threading
 
+from websocket import create_connection
+
 from steampy.guard import generate_one_time_code
 import steampy.utils
 from steamreg import *
@@ -25,16 +27,13 @@ class MainWindow():
     def __init__(self, parent):
 
         self.filename = None
-        self.mailboxes_path = None
         self.accounts = []
-        self.mailboxes = []
         self.parent = parent
         self.steamreg = SteamRegger()
 
         frame = Frame(self.parent)
         menubar = Menu(parent)
         parent['menu'] = menubar
-        menubar.add_command(label="Указать данные от почт", command=self.mailboxes_file_open)
         menubar.add_command(label="Указать данные от аккаунтов", command=self.file_open)
 
         self.onlinesim_api_key = StringVar()
@@ -83,6 +82,15 @@ class MainWindow():
 
 
     def start_binding_onlinesim(self):
+        def get_new_number(tzid):
+            sms_service.set_operation_ok(tzid)
+            sms_service.used_codes.clear()
+            self.status_bar.set('Запрашиваю новый номер...')
+            tzid = sms_service.request_new_number()
+            number = sms_service.get_number(tzid)
+            self.log_box.insert(END, 'Новый номер: ' + number)
+            return tzid, number
+
         onlinesim_api_key = self.onlinesim_api_key.get()
         if not onlinesim_api_key:
             showwarning("Ошибка", "Не указан api ключ для onlinesim.ru", parent=self.parent)
@@ -107,28 +115,24 @@ class MainWindow():
             self.status_bar.set('Запрашиваю номер...')
             number = sms_service.get_number(tzid)
             self.log_box.insert(END, 'Номер: ' + number)
-            for acc_data, email_data in zip(self.accounts, self.mailboxes):
-                login, passwd, email, email_passwd = acc_data
-                login, passwd = self.steamreg.create_account()
-                email, email_passwd = email_data
-                print(login, passwd, email, email_passwd)
+            for login, passwd in self.accounts:
+                print(login, passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
-                steam_client = self.steamreg.mobile_login(login, passwd, email, email_passwd)
+                steam_client = self.steamreg.mobile_login(login, passwd)
 
                 if ctr == numbers_per_account:
-                    sms_service.set_operation_ok(tzid)
-                    sms_service.used_codes.clear()
-                    self.status_bar.set('Запрашиваю новый номер...')
-                    tzid = sms_service.request_new_number()
-                    number = sms_service.get_number(tzid)
-                    self.log_box.insert(END, 'Новый номер: ' + number)
+                    tzid, number = get_new_number(tzid)
                     ctr = 0
                     is_repeated = False
 
                 while True:
                     self.status_bar.set('Делаю запрос на добавление номера...')
                     is_number_valid = self.steamreg.steam_addphone_request(steam_client, number)
+                    if not is_number_valid:
+                        self.log_box.insert(END, 'Стим сообщил о том, что номер не подходит')
+                        tzid, number = get_new_number(tzid)
+                        continue
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
                     is_repeated = True
@@ -158,11 +162,9 @@ class MainWindow():
 
                 self.save_data(mobguard_data)
 
-                self.change_mailbox(steam_client, email, email_passwd, mobguard_data)
+                self.change_mailbox(steam_client, mobguard_data)
                 self.status_bar.set('Активирую аккаунт...')
-                self.activate_steam_account(steam_client, email)
-                self.status_bar.set('Добавляю в друзья главный аккаунт...')
-                # self.add_main_account_to_friendslist(steam_client)
+                self.activate_steam_account(steam_client)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
                 ctr += 1
@@ -205,13 +207,11 @@ class MainWindow():
         try:
             id, number = sms_service.get_number()
             self.log_box.insert(END, 'Номер: ' + number)
-            for acc_data, email_data in zip(self.accounts, self.mailboxes):
-                login, passwd, email, email_passwd = acc_data
-                email, email_passwd = email_data
+            for login, passwd in self.accounts:
                 print(login, passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
-                steam_client = self.steamreg.mobile_login(login, passwd, email, email_passwd)
+                steam_client = self.steamreg.mobile_login(login, passwd)
                 if ctr == numbers_per_account:
                     sms_service.set_status(id, '6')
                     self.status_bar.set('Запрашиваю новый номер...')
@@ -253,11 +253,9 @@ class MainWindow():
                                              'делаю повторный запрос...')
                 self.save_data(mobguard_data)
 
-                self.change_mailbox(steam_client, email, email_passwd, mobguard_data)
+                self.change_mailbox(steam_client, mobguard_data)
                 self.status_bar.set('Активирую аккаунт...')
-                self.activate_steam_account(steam_client, email)
-                self.status_bar.set('Добавляю в друзья главный аккаунт...')
-                # self.add_main_account_to_friendslist(steam_client)
+                self.activate_steam_account(steam_client)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
                 ctr += 1
@@ -309,8 +307,6 @@ class MainWindow():
             with open(self.filename, 'r') as f:
                 for acc_item in f.readlines():
                     acc_data = acc_item.rstrip().split(':')
-                    if len(acc_data) == 2:
-                        acc_data += ['', '']
                     self.accounts.append(acc_data)
 
             self.status_bar.set('Загружен файл: {}'.format(
@@ -321,7 +317,7 @@ class MainWindow():
 
 
 
-    def change_mailbox(self, steam_client, email, email_passwd, mobguard_data):
+    def change_mailbox(self, steam_client, mobguard_data):
         steam_client.session.cookies.clear()
         self.status_bar.set('Делаю повторную авторизацию в аккаунт...')
         steam_client.login(steam_client.login_name, steam_client.password, mobguard_data)
@@ -372,38 +368,40 @@ class MainWindow():
             break
 
         account_id = steampy.utils.steam_id_to_account_id(steam_client.steamid)
+        self.status_bar.set('Делаю запрос на получение почты у dropmail...')
+        mailbox, websocket = self.generate_mailbox()
         data = {
         'sessionid': sessionid,
         'wizard_ajax': '1',
         's': process_session_id,
         'account': account_id,
-        'email': email
+        'email': mailbox
         }
         r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryChangeEmail/', data=data)
         print(r.text)
 
-        self.status_bar.set('Жду код из письма...')
-        subject = 'Your Steam account: Email address change request'
-        email_code = steampy.utils.fetch_emaiL_code_imap(email, email_passwd, steam_client.login_name, subject)
+        self.status_bar.set('Жду письма от dropmail...')
+        email_code = self.fetch_email_code(websocket)
         data = {
         'sessionid': sessionid,
         'wizard_ajax': '1',
         's': process_session_id,
         'account': account_id,
-        'email': email,
+        'email': mailbox,
         'email_change_code': email_code
         }
         r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryConfirmChangeEmail/', data=data)
         print(r.text)
 
+
     @staticmethod
-    def activate_steam_account(steam_client, email):
+    def activate_steam_account(steam_client):
         sessionid = steam_client.get_session_id()
         url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
         data = {
         'sessionID': sessionid,
         'type': 'profileSave',
-        'personaName': email.partition('@')[0],
+        'personaName': steam_client.login_name,
         'summary': 'No information given.',
         'primary_group_steamid': '0'
         }
@@ -411,22 +409,24 @@ class MainWindow():
 
 
     @staticmethod
-    def add_main_account_to_friendslist(steam_client):
-        sessionid = steam_client.get_session_id()
-        url = 'http://steamcommunity.com/actions/AddFriendAjax'
-        data = {
-        'sessionID': sessionid,
-        'steamid': '76561198218640297',
-        'accept_invite': ''
-        }
-        steam_client.session.post(url, data=data)
-
-    def fetch_email_code():
+    def generate_mailbox():
+        ws = create_connection('wss://dropmail.me/websocket')
+        mailbox = ws.recv().partition(':')[0].lstrip('A')
+        ws.recv() # skip the message with domains
+        return mailbox, ws
 
 
+    @staticmethod
+    def fetch_email_code(websocket):
+        opcode, data = websocket.recv_data()
+        mail = json.loads(data.decode('utf-8').lstrip('I'))['text']
+
+        regexr = r'to update your email address:\s+(.+)\s+'
+        guard_code = re.search(regexr, mail).group(1).rstrip()
+        return guard_code
 
 root = Tk()
 window = MainWindow(root)
-root.title('Steam Auto Authenticator v0.2')
+root.title('Steam Auto Authenticator v0.3')
 root.mainloop()
 
