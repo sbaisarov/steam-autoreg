@@ -17,10 +17,13 @@ import steampy.utils
 from steamreg import *
 from sms_services import *
 
-# logging.basicConfig(filename='logs.txt',
-#                    level=logging.DEBUG,
-#                    format='%(asctime)s - %(levelname)s - %(message)s')
-
+logging.getLogger("requests").setLevel(logging.ERROR)
+logger = logging.getLogger()
+formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+handler = logging.FileHandler('reger.log', 'w', encoding='utf-8')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 class MainWindow():
 
@@ -79,17 +82,21 @@ class MainWindow():
 
         status_bar = Label(log_frame, anchor=W, text='Готов...', textvariable=self.status_bar)
         status_bar.grid(row=2, column=0, columnspan=2, sticky=W, pady=5)
+        caption_label = Label(log_frame, text='by Shamanovsky', anchor=E)
+        caption_label.grid(row=2, column=0, sticky=E)
 
 
     def start_binding_onlinesim(self):
         def get_new_number(tzid):
+            ctr = 0
+            is_repeated = False
             sms_service.set_operation_ok(tzid)
             sms_service.used_codes.clear()
             self.status_bar.set('Запрашиваю новый номер...')
             tzid = sms_service.request_new_number()
             number = sms_service.get_number(tzid)
             self.log_box.insert(END, 'Новый номер: ' + number)
-            return tzid, number
+            return tzid, number, is_repeated, ctr
 
         onlinesim_api_key = self.onlinesim_api_key.get()
         if not onlinesim_api_key:
@@ -116,49 +123,45 @@ class MainWindow():
             number = sms_service.get_number(tzid)
             self.log_box.insert(END, 'Номер: ' + number)
             for login, passwd in self.accounts:
-                print(login, passwd)
+                logger.info(login + ' ' + passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd)
 
                 if ctr == numbers_per_account:
-                    tzid, number = get_new_number(tzid)
-                    ctr = 0
-                    is_repeated = False
+                    tzid, number, is_repeated, ctr = get_new_number(tzid)
 
                 while True:
-                    self.status_bar.set('Делаю запрос на добавление номера...')
+                    self.status_bar.set('Делаю запрос Steam на добавление номера...')
                     is_number_valid = self.steamreg.steam_addphone_request(steam_client, number)
                     if not is_number_valid:
                         self.log_box.insert(END, 'Стим сообщил о том, что номер не подходит')
-                        tzid, number = get_new_number(tzid)
+                        tzid, number, is_repeated, ctr = get_new_number(tzid)
                         continue
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
                     is_repeated = True
                     if not sms_code:
-                        self.log_box.insert(END, 'Не доходит SMS. Делаю новый запрос...')
+                        self.log_box.insert(END, 'Не доходит SMS. Меняю номер...')
+                        tzid, number, is_repeated, ctr = get_new_number(tzid)
                         continue
                     success = self.steamreg.steam_checksms_request(steam_client, sms_code)
-                    if success:
-                        break
-                    self.log_box.insert(END, 'SMS код не подошел либо не был получен, '
-                                             'делаю повторный запрос...')
+                    if not success:
+                        raise Exception('Неверный SMS код. Обратись ко мне с этой ошибкой')
 
-                while True:
                     self.status_bar.set('Делаю запрос на привязку гуарда...')
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
                     if not sms_code:
-                        self.log_box.insert(END, 'Не доходит SMS. Делаю новый запрос...')
+                        self.log_box.insert(END, 'Не доходит SMS. Меняю номер...')
+                        tzid, number, is_repeated, ctr = get_new_number(tzid)
                         continue
                     success = self.steamreg.steam_finalize_authenticator_request(
                                 steam_client, mobguard_data, sms_code)
-                    if success:
-                        break
-                    self.log_box.insert(END, 'СМС код не подошел либо не был получен, '
-                                             'делаю повторный запрос...')
+                    if not success:
+                        raise Exception('Неверный SMS код. Обратись ко мне с этой ошибкой')
+                    break
 
                 self.save_data(mobguard_data)
 
@@ -208,7 +211,7 @@ class MainWindow():
             id, number = sms_service.get_number()
             self.log_box.insert(END, 'Номер: ' + number)
             for login, passwd in self.accounts:
-                print(login, passwd)
+                logger.info(login + ' ' + passwd)
                 self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd)
@@ -335,10 +338,10 @@ class MainWindow():
         's': process_session_id,
         'method': '8'
         }
-        r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxSendAccountRecoveryCode',
-                                      data=data)
-        print(r.json())
-        if not r.json()['success']:
+        resp = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxSendAccountRecoveryCode',
+                                      data=data).json()
+        logger.info(str(resp))
+        if not resp['success']:
             raise Exception('Ошибка во время выполнения запроса AjaxSendAccountRecoveryCode:', r.text)
 
         second_attempt = False
@@ -348,7 +351,7 @@ class MainWindow():
             # timestamp = int(resp['response']['server_time'])
             timestamp = int(time.time())
             code = generate_one_time_code(mobguard_data['shared_secret'], timestamp)
-            print(code)
+            logger.info(code)
             params = {
             'code': code,
             's': process_session_id,
@@ -360,7 +363,7 @@ class MainWindow():
             'wizard_ajax': '1'
             }
             resp = steam_client.session.get('https://help.steampowered.com/en/wizard/AjaxVerifyAccountRecoveryCode', params=params)
-            print(resp.text)
+            logger.info(resp.text)
             if resp.json()['errorMsg'] and not second_attempt:
                 time.sleep(30 - timestamp % 30)
                 second_attempt = True
@@ -378,7 +381,7 @@ class MainWindow():
         'email': mailbox
         }
         r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryChangeEmail/', data=data)
-        print(r.text)
+        logger.info(r.text)
 
         self.status_bar.set('Жду письма от dropmail...')
         email_code = self.fetch_email_code(websocket)
@@ -391,7 +394,7 @@ class MainWindow():
         'email_change_code': email_code
         }
         r = steam_client.session.post('https://help.steampowered.com/en/wizard/AjaxAccountRecoveryConfirmChangeEmail/', data=data)
-        print(r.text)
+        logger.info(r.text)
 
 
     @staticmethod
@@ -428,6 +431,6 @@ class MainWindow():
 
 root = Tk()
 window = MainWindow(root)
-root.title('Steam Auto Authenticator v0.3')
+root.title('Steam Auto Authenticator v0.4')
 root.mainloop()
 
