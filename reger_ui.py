@@ -28,7 +28,6 @@ logger.setLevel(logging.INFO)
 class MainWindow():
 
     def __init__(self, parent):
-
         self.filename = None
         self.accounts = []
         self.parent = parent
@@ -48,17 +47,6 @@ class MainWindow():
         onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
         onlinesim_apikey_entry = Entry(frame, textvariable=self.onlinesim_api_key)
         onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
-        start_binding_onlinesim_bttn = Button(frame, text='Начать',
-                                              command=lambda: self.create_thread(self.start_binding_onlinesim))
-        start_binding_onlinesim_bttn.grid(row=1, column=0, pady=5, sticky=W, padx=10)
-
-        smsactivate_apikey_label = Label(frame, text='sms-activate.ru api key:')
-        smsactivate_apikey_label.grid(row=2, column=0, pady=5, sticky=W)
-        smsactivate_apikey_entry = Entry(frame, textvariable=self.smsactivate_api_key)
-        smsactivate_apikey_entry.grid(row=2, column=1, pady=5, padx=5, sticky=W)
-        start_binding_smsactivate_bttn = Button(frame, text='Начать',
-                                                command=lambda: self.create_thread(self.start_binding_smsactivate))
-        start_binding_smsactivate_bttn.grid(row=3, column=0, pady=5, sticky=W, padx=10)
 
         ctr_label = Label(frame, text='Количество аккаунтов на 1 номер:')
         ctr_label.grid(row=4, column=0, pady=5)
@@ -103,7 +91,7 @@ class MainWindow():
             showwarning("Ошибка", "Не указан api ключ для onlinesim.ru", parent=self.parent)
             return
         if not self.filename:
-            showwarning("Ошибка", "Не указан файл с данными от аккаунтов", parent=self.parent)
+            showwarning("Предупреждение", "Не указан файл с данными от аккаунтов", parent=self.parent)
             return
         try:
             numbers_per_account = int(self.numbers_per_account.get())
@@ -186,97 +174,6 @@ class MainWindow():
         finally:
             self.status_bar.set('Готов...')
 
-    def start_binding_smsactivate(self):
-        smsactivate_api_key =  self.smsactivate_api_key.get()
-        if not smsactivate_api_key:
-            showwarning("Ошибка", "Не указан api ключ для sms-activate.ru", parent=self.parent)
-            return
-        if not self.filename:
-            showwarning("Ошибка", "Не указан файл с данными от аккаунтов", parent=self.parent)
-            return
-        sms_service = SmsActivateApi(smsactivate_api_key)
-        ctr = 0
-        try:
-            numbers_per_account = int(self.numbers_per_account.get())
-            if numbers_per_account <= 0:
-                raise ValueError
-        except (ValueError, TypeError):
-            showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                        "связанных с 1 номером.", parent=self.parent)
-            return
-
-        status = '1'
-        self.status_bar.set('Запрашиваю номер...')
-        try:
-            id, number = sms_service.get_number()
-            self.log_box.insert(END, 'Номер: ' + number)
-            for login, passwd in self.accounts:
-                logger.info(login + ' ' + passwd)
-                self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
-                self.status_bar.set('Логинюсь в аккаунт...')
-                steam_client = self.steamreg.mobile_login(login, passwd)
-                if ctr == numbers_per_account:
-                    sms_service.set_status(id, '6')
-                    self.status_bar.set('Запрашиваю новый номер...')
-                    id, number = sms_service.get_number()
-                    self.log_box.insert(END, 'Новый номер: ' + number)
-                    status = '1'
-                    ctr = 0
-
-                while True:
-                    self.status_bar.set('Делаю запрос на добавление номера...')
-                    self.steamreg.steam_addphone_request(steam_client, number)
-                    sms_service.set_status(id, status)
-                    self.status_bar.set('Жду SMS код...')
-                    sms_code = sms_service.get_status(id)
-                    status = '3'
-                    if not sms_code:
-                        self.log_box.insert(END, 'Не доходит SMS. Делаю новый запрос...')
-                        continue
-                    success = self.steamreg.steam_checksms_request(steam_client, sms_code)
-                    if success:
-                        break
-                    self.log_box.insert(END, 'СМС код не подошел, '
-                                             'делаю повторный запрос...')
-
-                while True:
-                    self.status_bar.set('Делаю запрос на привязку гуарда...')
-                    mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
-                    sms_service.set_status(id, status)
-                    self.status_bar.set('Жду SMS код...')
-                    sms_code = sms_service.get_status(id, sms_code_prev=sms_code)
-                    if not sms_code:
-                        self.log_box.insert(END, 'Не доходит SMS. Делаю новый запрос...')
-                        continue
-                    success = self.steamreg.steam_finalize_authenticator_request(
-                                steam_client, mobguard_data, sms_code)
-                    if success:
-                        break
-                    self.log_box.insert(END, 'СМС код не подошел, '
-                                             'делаю повторный запрос...')
-                self.save_data(mobguard_data)
-
-                self.change_mailbox(steam_client, mobguard_data)
-                self.status_bar.set('Активирую аккаунт...')
-                self.activate_steam_account(steam_client)
-                self.log_box.insert(END, 'Guard успешно привязан: ' + login)
-
-                ctr += 1
-
-        except SteamAuthError as err:
-            self.log_box.insert(END, err)
-        except SteamCaptchaError as err:
-            showwarning('Ошибка', err)
-            return
-        except SmsActivateError as err:
-            showwarning("Ошибка sms-activate.ru", err, parent=self.parent)
-            return
-        except Exception:
-            showwarning('Ошибка', traceback.format_exc())
-            return
-        finally:
-            self.status_bar.set('Готов...')
-
 
     @staticmethod
     def create_thread(func):
@@ -319,37 +216,6 @@ class MainWindow():
                                     self.filename, err), parent=self.parent)
 
 
-    @staticmethod
-    def activate_steam_account(steam_client):
-        sessionid = steam_client.get_session_id()
-        url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
-        data = {
-        'sessionID': sessionid,
-        'type': 'profileSave',
-        'personaName': steam_client.login_name,
-        'summary': 'No information given.',
-        'primary_group_steamid': '0'
-        }
-        steam_client.session.post(url, data=data)
-
-
-    @staticmethod
-    def generate_mailbox():
-        ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
-        ws = create_connection('wss://dropmail.me/websocket', sslopt=ssl_option)
-        mailbox = ws.recv().partition(':')[0].lstrip('A')
-        ws.recv() # skip the message with domains
-        return mailbox, ws
-
-
-    @staticmethod
-    def fetch_email_code(websocket):
-        opcode, data = websocket.recv_data()
-        mail = json.loads(data.decode('utf-8').lstrip('I'))['text']
-
-        regexr = r'to update your email address:\s+(.+)\s+'
-        guard_code = re.search(regexr, mail).group(1).rstrip()
-        return guard_code
 
 root = Tk()
 window = MainWindow(root)
