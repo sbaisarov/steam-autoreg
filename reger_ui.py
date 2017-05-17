@@ -3,8 +3,10 @@ from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
 import logging
 import urllib
+import requests
 import os
 import datetime
+import uuid
 import json
 import time
 import traceback
@@ -25,18 +27,38 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
+
+
 class MainWindow():
 
     def __init__(self, parent):
-        self.filename = None
-        self.accounts = []
         self.parent = parent
+        frame = Frame(self.parent)
+        success = self._authorize_user()
+        if not success:
+            self.license = StringVar()
+            license_key_label = Label(frame, text='Введите ключ активации программы:')
+            license_key_label.grid(row=0, column=0, pady=5, sticky=W)
+            self.license_key_entry = Entry(frame, textvariable=self.license)
+            self.license_key_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
+            check_license_bttn = Button(frame, text='Проверить лицензию',
+                                        command=lambda: self.check_license(frame),
+                                        relief=GROOVE)
+            check_license_bttn.grid(sticky=W, padx=20, pady=5)
+            frame.grid(row=0, column=0)
+            return
+
+        self.filename = None
+        self.manifest = None
+        self.autoreg = IntVar()
+        self.import_mafile = IntVar()
+        self.accounts = []
         self.steamreg = SteamRegger()
 
-        frame = Frame(self.parent)
         menubar = Menu(parent)
         parent['menu'] = menubar
         menubar.add_command(label="Указать данные от аккаунтов", command=self.file_open)
+        menubar.add_command(label="Указать manifest", command=self.manifest_open)
 
         self.onlinesim_api_key = StringVar()
         self.smsactivate_api_key = StringVar()
@@ -49,9 +71,20 @@ class MainWindow():
         onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
 
         ctr_label = Label(frame, text='Количество аккаунтов на 1 номер:')
-        ctr_label.grid(row=4, column=0, pady=5)
+        ctr_label.grid(row=1, column=0, pady=5)
         ctr_entry = Entry(frame, textvariable=self.numbers_per_account, width=5)
-        ctr_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
+        ctr_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
+
+        autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
+                                          variable=self.autoreg)
+        autoreg_checkbutton.grid(row=2, column=0, sticky=W)
+        mafile_checkbutton = Checkbutton(frame, text='Импортировать maFile в SDA',
+                                         variable=self.import_mafile)
+        mafile_checkbutton.grid(row=2, column=1, pady=3)
+
+        start_button = Button(frame, text='Начать', command=self.run_process,
+                              bg='#CEC8C8', relief=GROOVE, width=50)
+        start_button.grid(pady=10, columnspan=2)
 
         log_frame = Frame(self.parent)
         errorlog_label = Label(log_frame, text='Логи:')
@@ -70,28 +103,17 @@ class MainWindow():
 
         status_bar = Label(log_frame, anchor=W, text='Готов...', textvariable=self.status_bar)
         status_bar.grid(row=2, column=0, columnspan=2, sticky=W, pady=5)
-        caption_label = Label(log_frame, text='by Shamanovsky', anchor=E)
+        caption_label = Label(log_frame, text='by Shamanovsky')
         caption_label.grid(row=2, column=0, sticky=E)
 
 
-    def start_binding_onlinesim(self):
-        def get_new_number(tzid):
-            ctr = 0
-            is_repeated = False
-            sms_service.set_operation_ok(tzid)
-            sms_service.used_codes.clear()
-            self.status_bar.set('Запрашиваю новый номер...')
-            tzid = sms_service.request_new_number()
-            number = sms_service.get_number(tzid)
-            self.log_box.insert(END, 'Новый номер: ' + number)
-            return tzid, number, is_repeated, ctr
-
+    def run_process(self):
         onlinesim_api_key = self.onlinesim_api_key.get()
         if not onlinesim_api_key:
             showwarning("Ошибка", "Не указан api ключ для onlinesim.ru", parent=self.parent)
             return
-        if not self.filename:
-            showwarning("Предупреждение", "Не указан файл с данными от аккаунтов", parent=self.parent)
+        if not self.filename and not self.autoreg:
+            showwarning("Ошибка", "Не указан файл с данными от аккаунтов", parent=self.parent)
             return
         try:
             numbers_per_account = int(self.numbers_per_account.get())
@@ -117,21 +139,21 @@ class MainWindow():
                 steam_client = self.steamreg.mobile_login(login, passwd)
 
                 if ctr == numbers_per_account:
-                    tzid, number, is_repeated, ctr = get_new_number(tzid)
+                    tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
 
                 while True:
                     self.status_bar.set('Делаю запрос Steam на добавление номера...')
                     is_number_valid = self.steamreg.steam_addphone_request(steam_client, number)
                     if not is_number_valid:
                         self.log_box.insert(END, 'Стим сообщил о том, что номер не подходит')
-                        tzid, number, is_repeated, ctr = get_new_number(tzid)
+                        tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                         continue
                     self.status_bar.set('Жду SMS код...')
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
                     is_repeated = True
                     if not sms_code:
                         self.log_box.insert(END, 'Не доходит SMS. Меняю номер...')
-                        tzid, number, is_repeated, ctr = get_new_number(tzid)
+                        tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                         continue
                     success = self.steamreg.steam_checksms_request(steam_client, sms_code)
                     if not success:
@@ -143,7 +165,7 @@ class MainWindow():
                     sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
                     if not sms_code:
                         self.log_box.insert(END, 'Не доходит SMS. Меняю номер...')
-                        tzid, number, is_repeated, ctr = get_new_number(tzid)
+                        tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                         continue
                     success = self.steamreg.steam_finalize_authenticator_request(
                                 steam_client, mobguard_data, sms_code)
@@ -152,27 +174,74 @@ class MainWindow():
                     break
 
                 self.save_data(mobguard_data)
-
-                self.change_mailbox(steam_client, mobguard_data)
-                self.status_bar.set('Активирую аккаунт...')
-                self.activate_steam_account(steam_client)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
                 ctr += 1
 
         except OnlineSimError as err:
             showwarning("Ошибка onlinesim.ru", err, parent=self.parent)
-            return
         except SteamAuthError as err:
             self.log_box.insert(END, err)
         except SteamCaptchaError as err:
             showwarning('Ошибка', err)
-            return
         except Exception:
             showwarning('Ошибка', traceback.format_exc())
-            return
         finally:
             self.status_bar.set('Готов...')
+
+
+    def _get_new_number(self, sms_service, tzid):
+        ctr = 0
+        is_repeated = False
+        sms_service.set_operation_ok(tzid)
+        sms_service.used_codes.clear()
+        self.status_bar.set('Запрашиваю новый номер...')
+        tzid = sms_service.request_new_number()
+        number = sms_service.get_number(tzid)
+        self.log_box.insert(END, 'Новый номер: ' + number)
+        return tzid, number, is_repated, ctr
+
+    @staticmethod
+    def _authorize_user():
+        key = ''
+        if os.path.exists('steamreg.key'):
+            with open('steamreg.key', 'r') as f:
+                key = f.read()
+                resp = requests.post('http://127.0.0.1:3000',
+                             data={
+                                     'key': key,
+                                     'uuid': uuid.uuid1()
+                             }
+               ).json()
+
+        if not key or not resp['success']:
+            return False
+
+        return True
+
+    def check_license(self, frame):
+        key = self.license_key_entry.get()
+        resp = requests.post('http://127.0.0.1:3000',
+                             data={
+                                     'key': key,
+                                     'uuid': uuid.uuid1()
+                             }
+               ).json()
+
+        print(resp)
+        if not resp['success']:
+            showwarning('Ошибка', 'Неверный ключ либо попытка активации с неавторизованного устройства')
+            return
+
+        with open('steamreg.key', 'w') as f:
+            f.write(key)
+        top = Toplevel(frame)
+        top.title("Успешно!")
+        top.geometry('250x25')
+        msg = Message(top, text='Программа активирована.', aspect=1000)
+        msg.grid()
+
+        self.__init__(root)
 
 
     @staticmethod
@@ -216,9 +285,24 @@ class MainWindow():
                                     self.filename, err), parent=self.parent)
 
 
+    def manifest_open(self):
+        dir_ = (os.path.dirname(self.manifest)
+               if self.manifest is not None else '.')
+        manifest = askopenfilename(
+                    title='SDA manifest',
+                    initialdir=dir_,
+                    filetypes=[('manifest', '*.json')],
+                    defaultextension='.json', parent=self.parent)
+        if manifest:
+            return self.load_manifest(manifest)
+
+    def load_manifest(self, manifest):
+        self.manifest = manifest
+        with open(manifest, 'r') as f:
+            self.manifest_data = json.load(f)
+
 
 root = Tk()
 window = MainWindow(root)
-root.title('Steam Auto Authenticator v0.4')
+root.title('Steam Auto Authenticator v0.1')
 root.mainloop()
-
