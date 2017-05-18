@@ -28,7 +28,6 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 
-
 class MainWindow():
 
     def __init__(self, parent):
@@ -39,8 +38,12 @@ class MainWindow():
             self.license = StringVar()
             license_key_label = Label(frame, text='Введите ключ активации программы:')
             license_key_label.grid(row=0, column=0, pady=5, sticky=W)
-            self.license_key_entry = Entry(frame, textvariable=self.license)
+            self.license_key_entry = Entry(frame)
             self.license_key_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
+            login_label = Label(frame, text='Ваш логин:')
+            login_label.grid(row=1, column=0, pady=5, sticky=W)
+            self.login_entry = Entry(frame)
+            self.login_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
             check_license_bttn = Button(frame, text='Проверить лицензию',
                                         command=lambda: self.check_license(frame),
                                         relief=GROOVE)
@@ -201,16 +204,17 @@ class MainWindow():
         self.log_box.insert(END, 'Новый номер: ' + number)
         return tzid, number, is_repated, ctr
 
-    @staticmethod
-    def _authorize_user():
+
+    def _authorize_user(self):
         key = ''
-        if os.path.exists('steamreg.key'):
-            with open('steamreg.key', 'r') as f:
-                key = f.read()
+        if os.path.exists('steamreg_key.txt'):
+            with open('steamreg_key.txt', 'r') as f:
+                key, login = f.read().partition(':')[::2]
                 resp = requests.post('http://127.0.0.1:3000',
                              data={
+                                     'login': login,
                                      'key': key,
-                                     'uuid': uuid.uuid1()
+                                     'uid': self.get_node()
                              }
                ).json()
 
@@ -220,29 +224,43 @@ class MainWindow():
         return True
 
     def check_license(self, frame):
-        key = self.license_key_entry.get()
+        key, login = self.license_key_entry.get(), self.login_entry.get()
+        if not all((key, login)):
+            showwarning('Ошибка', 'Заполните все поля')
+            return
+
         resp = requests.post('http://127.0.0.1:3000',
                              data={
+                                     'login': login,
                                      'key': key,
-                                     'uuid': uuid.uuid1()
+                                     'uid': self.get_node()
                              }
                ).json()
 
-        print(resp)
         if not resp['success']:
             showwarning('Ошибка', 'Неверный ключ либо попытка активации с неавторизованного устройства')
             return
 
-        with open('steamreg.key', 'w') as f:
-            f.write(key)
+        with open('steamreg_key.txt', 'w') as f:
+            f.write('%s:%s' % (key, login))
+
         top = Toplevel(frame)
         top.title("Успешно!")
-        top.geometry('250x25')
-        msg = Message(top, text='Программа активирована.', aspect=1000)
+        top.geometry('300x60')
+        msg = ('Программа активирована. Пожалуйста, храните '
+            'текстовый файл, который появился после активации, в одной папке с программой!')
+        msg = Message(top, text=msg, aspect=500)
         msg.grid()
 
         self.__init__(root)
 
+
+    @staticmethod
+    def get_node():
+        mac = uuid.getnode()
+        if (mac >> 40) % 2:
+            raise OSError('Не удается авторизовать устройство. Обратитесь в тех.поддержку.')
+        return hex(mac)
 
     @staticmethod
     def create_thread(func):
