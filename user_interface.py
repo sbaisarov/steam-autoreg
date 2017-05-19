@@ -3,7 +3,6 @@ from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
 import logging
 import urllib
-import requests
 import os
 import datetime
 import uuid
@@ -12,10 +11,9 @@ import time
 import traceback
 import threading
 
-from websocket import create_connection
+import requests
 
 from steampy.guard import generate_one_time_code
-import steampy.utils
 from steamreg import *
 from sms_services import *
 
@@ -60,8 +58,8 @@ class MainWindow():
 
         menubar = Menu(parent)
         parent['menu'] = menubar
-        menubar.add_command(label="Указать данные от аккаунтов", command=self.file_open)
-        menubar.add_command(label="Указать manifest", command=self.manifest_open)
+        menubar.add_command(label="Указать путь к аккаунтам", command=self.file_open)
+        menubar.add_command(label="Указать путь к manifest", command=self.manifest_open)
 
         self.onlinesim_api_key = StringVar()
         self.smsactivate_api_key = StringVar()
@@ -79,7 +77,7 @@ class MainWindow():
         ctr_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
 
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
-                                          variable=self.autoreg)
+                                          variable=self.autoreg, command=self.generate_accounts)
         autoreg_checkbutton.grid(row=2, column=0, sticky=W)
         mafile_checkbutton = Checkbutton(frame, text='Импортировать maFile в SDA',
                                          variable=self.import_mafile)
@@ -115,16 +113,22 @@ class MainWindow():
         if not onlinesim_api_key:
             showwarning("Ошибка", "Не указан api ключ для onlinesim.ru", parent=self.parent)
             return
-        if not self.filename and not self.autoreg:
-            showwarning("Ошибка", "Не указан файл с данными от аккаунтов", parent=self.parent)
+        if not self.filename and not self.autoreg.get():
+            showwarning("Ошибка", ("Не указан путь к файлу с данными от аккаунтов. "
+                                   "Если у вас нет своих аккаунтов, то поставьте галочку 'Создавать новые аккаунты'"),
+                        parent=self.parent)
+            return
+        if not self.manifest and self.import_mafile.get():
+            showwarning("Ошибка", "Не указан путь к manifest файлу Steam Desktop Authenticator",
+                        parent=self.parent)
             return
         try:
             numbers_per_account = int(self.numbers_per_account.get())
-            if numbers_per_account <= 0:
+            if not 0 < numbers_per_account <= 7:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                        "связанных с 1 номером.", parent=self.parent)
+                        "связанных с 1 номером (больше нуля но меньше 7-и).", parent=self.parent)
             return
 
         sms_service = OnlineSimApi(onlinesim_api_key)
@@ -135,9 +139,10 @@ class MainWindow():
             self.status_bar.set('Запрашиваю номер...')
             number = sms_service.get_number(tzid)
             self.log_box.insert(END, 'Номер: ' + number)
-            for login, passwd in self.accounts:
-                logger.info(login + ' ' + passwd)
-                self.log_box.insert(END, 'Привязываю Guard к аккаунту: ' + login)
+            for data in self.accounts:
+                login, passwd = data[:2]
+                logger.info('account data: %s %s', login, passwd)
+                self.log_box.insert(END, 'Привязываю Guard к аккаунту: %s:%s' % login, passwd)
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd)
 
@@ -171,7 +176,7 @@ class MainWindow():
                         tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                         continue
                     success = self.steamreg.steam_finalize_authenticator_request(
-                                steam_client, mobguard_data, sms_code)
+                        steam_client, mobguard_data, sms_code)
                     if not success:
                         raise Exception('Неверный SMS код. Обратись ко мне с этой ошибкой')
                     break
@@ -193,7 +198,7 @@ class MainWindow():
             self.status_bar.set('Готов...')
 
 
-    def _get_new_number(self, sms_service, tzid):
+    def get_new_number(self, sms_service, tzid):
         ctr = 0
         is_repeated = False
         sms_service.set_operation_ok(tzid)
@@ -202,7 +207,7 @@ class MainWindow():
         tzid = sms_service.request_new_number()
         number = sms_service.get_number(tzid)
         self.log_box.insert(END, 'Новый номер: ' + number)
-        return tzid, number, is_repated, ctr
+        return tzid, number, is_repeated, ctr
 
 
     def _authorize_user(self):
@@ -210,13 +215,13 @@ class MainWindow():
         if os.path.exists('steamreg_key.txt'):
             with open('steamreg_key.txt', 'r') as f:
                 key, login = f.read().partition(':')[::2]
-                resp = requests.post('http://127.0.0.1:3000',
-                             data={
-                                     'login': login,
-                                     'key': key,
-                                     'uid': self.get_node()
-                             }
-               ).json()
+                resp = requests.post('https://shamanovski.pythonanywhere.com/',
+                                     data={
+                                             'login': login,
+                                             'key': key,
+                                             'uid': self.get_node()
+                                     }
+                       ).json()
 
         if not key or not resp['success']:
             return False
@@ -229,7 +234,7 @@ class MainWindow():
             showwarning('Ошибка', 'Заполните все поля')
             return
 
-        resp = requests.post('http://127.0.0.1:3000',
+        resp = requests.post('https://shamanovski.pythonanywhere.com/',
                              data={
                                      'login': login,
                                      'key': key,
@@ -270,7 +275,25 @@ class MainWindow():
 
     def save_data(self, mobguard_data):
         steamid = mobguard_data['Session']['SteamID']
-        mafile_path = os.path.join(os.path.dirname(self.filename), steamid + '.maFile')
+        if self.autoreg.get():
+            txt_path = os.path.join(os.path.dirname(self.filename), login + '.txt')
+            with open(txt_path, 'w') as f:
+                f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
+                         login, passwd, str(datetime.date.today()), number))
+        if self.import_mafile.get():
+            mafile_path = os.path.join(os.path.dirname(self.manifest), steamid + '.maFile')
+            data = {
+            "encryption_iv": None,
+            "encryption_salt": None,
+            "filename": steamid + '.maFile',
+            "steamid": int(steamid)
+            }
+            self.manifest_data["entries"].append(data)
+            with open(self.manifest, 'w') as f:
+                json.dump(self.manifest_data, f)
+        else:
+            mafile_path = os.path.join(os.path.dirname(self.filename), steamid + '.maFile')
+
         with open(mafile_path, 'w') as f:
             json.dump(mobguard_data, f)
 
@@ -285,6 +308,14 @@ class MainWindow():
                     defaultextension='.txt', parent=self.parent)
         if filename:
             return self.load_file(filename)
+
+
+    def generate_accounts(self):
+        def generator():
+            self.status_bar.set('Создаю акканут. Могу тормозить т.к. решаю капчи...')
+            yield self.steamreg.create_account()
+
+        self.accounts = generator()
 
 
     def load_file(self, filename):
