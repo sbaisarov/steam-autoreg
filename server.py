@@ -53,7 +53,7 @@ def update_database(data, key, ip):
 
 def check_device(data, key, ip):
     db_data = db[key]
-    if data['uid'] != db[key]['uid']:
+    if data['uid'] != db_data['uid']:
         logger.warning('UID is different (%s). The request has been declined: %s', data['uid'], db_data)
         return False
     stored_ip, stored_city = db_data['ip']
@@ -63,6 +63,7 @@ def check_device(data, key, ip):
             logger.warning('The ip and the city are different (%s, %s). '
                 'The request has been declined: %s', ip, city, db_data)
             return False
+        logger.warning('IPs are different: %s-%s', ip, stored_ip)
 
     logger.info('The device has been authorized successfully: %s', db_data)
     return True
