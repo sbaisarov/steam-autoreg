@@ -181,7 +181,7 @@ class MainWindow():
                         raise Exception('Неверный SMS код. Обратись ко мне с этой ошибкой')
                     break
 
-                self.save_data(mobguard_data)
+                self.save_data(mobguard_data, login, passwd, number)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
                 ctr += 1
@@ -233,7 +233,6 @@ class MainWindow():
         if not all((key, login)):
             showwarning('Ошибка', 'Заполните все поля')
             return
-
         resp = requests.post('https://shamanovski.pythonanywhere.com/',
                              data={
                                      'login': login,
@@ -241,7 +240,6 @@ class MainWindow():
                                      'uid': self.get_node()
                              }
                ).json()
-
         if not resp['success']:
             showwarning('Ошибка', 'Неверный ключ либо попытка активации с неавторизованного устройства')
             return
@@ -252,8 +250,7 @@ class MainWindow():
         top = Toplevel(frame)
         top.title("Успешно!")
         top.geometry('300x60')
-        msg = ('Программа активирована. Пожалуйста, храните '
-            'текстовый файл, который появился после активации, в одной папке с программой!')
+        msg = ('Программа активирована. Приятного пользования!')
         msg = Message(top, text=msg, aspect=500)
         msg.grid()
 
@@ -273,13 +270,18 @@ class MainWindow():
             threading.Thread(target=func).start()
 
 
-    def save_data(self, mobguard_data):
+    def save_data(self, mobguard_data, login, passwd, number):
         steamid = mobguard_data['Session']['SteamID']
-        if self.autoreg.get():
-            txt_path = os.path.join(os.path.dirname(self.filename), login + '.txt')
-            with open(txt_path, 'w') as f:
-                f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
-                         login, passwd, str(datetime.date.today()), number))
+
+        if not os.path.exists('аккаунты'):
+            os.makedirs('аккаунты')
+
+        txt_path = os.path.join('аккаунты', steamid + '.txt')
+        with open(txt_path, 'w') as f:
+            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
+                     login, passwd, str(datetime.date.today()), number))
+        mafile_path = os.path.join('аккаунты', steamid + '.maFile')
+
         if self.import_mafile.get():
             mafile_path = os.path.join(os.path.dirname(self.manifest), steamid + '.maFile')
             data = {
@@ -291,8 +293,6 @@ class MainWindow():
             self.manifest_data["entries"].append(data)
             with open(self.manifest, 'w') as f:
                 json.dump(self.manifest_data, f)
-        else:
-            mafile_path = os.path.join(os.path.dirname(self.filename), steamid + '.maFile')
 
         with open(mafile_path, 'w') as f:
             json.dump(mobguard_data, f)
