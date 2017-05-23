@@ -4,12 +4,22 @@ from tkinter.messagebox import showwarning
 import logging
 import urllib
 import os
+import sys
 import datetime
 import uuid
 import json
 import time
 import traceback
 import threading
+import os
+from pkgutil import iter_modules
+
+
+installed_modules = [i[1] for i in iter_modules()]
+
+for module in ('requests', 'bs4'):
+    if not module in installed_modules:
+        os.system('pip install %s' % module)
 
 import requests
 
@@ -20,10 +30,15 @@ from sms_services import *
 logging.getLogger("requests").setLevel(logging.ERROR)
 logger = logging.getLogger()
 formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-handler = logging.FileHandler('reger.log', 'w', encoding='utf-8')
+handler = logging.FileHandler('logs.txt', encoding='utf-8')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
+
+def uncaught_exceptions_handler(type, value, tb):
+    logger.critical("Uncaught exception: {0} {1} {2}".format(type, value, traceback.format_tb(tb)))
+
+sys.excepthook = uncaught_exceptions_handler
 
 
 class MainWindow():
@@ -83,7 +98,7 @@ class MainWindow():
                                          variable=self.import_mafile)
         mafile_checkbutton.grid(row=2, column=1, pady=3)
 
-        start_button = Button(frame, text='Начать', command=self.run_process,
+        start_button = Button(frame, text='Начать', command=self.create_thread,
                               bg='#CEC8C8', relief=GROOVE, width=50)
         start_button.grid(pady=10, columnspan=2)
 
@@ -132,22 +147,18 @@ class MainWindow():
             return
 
         sms_service = OnlineSimApi(onlinesim_api_key)
-        ctr = 0
-        is_repeated = False
         try:
-            tzid = sms_service.request_new_number()
-            self.status_bar.set('Запрашиваю номер...')
-            number = sms_service.get_number(tzid)
-            self.log_box.insert(END, 'Номер: ' + number)
+            tzid, number, is_repeated, ctr = self.get_new_number(sms_service)
             for data in self.accounts:
+                if ctr == numbers_per_account:
+                    tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
+
                 login, passwd = data[:2]
                 logger.info('account data: %s %s', login, passwd)
-                self.log_box.insert(END, 'Привязываю Guard к аккаунту: %s:%s' % login, passwd)
+                self.log_box.insert(END, 'Привязываю Guard к аккаунту: %s:%s' % (login, passwd))
                 self.status_bar.set('Логинюсь в аккаунт...')
                 steam_client = self.steamreg.mobile_login(login, passwd)
 
-                if ctr == numbers_per_account:
-                    tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
 
                 while True:
                     self.status_bar.set('Делаю запрос Steam на добавление номера...')
@@ -198,11 +209,12 @@ class MainWindow():
             self.status_bar.set('Готов...')
 
 
-    def get_new_number(self, sms_service, tzid):
+    def get_new_number(self, sms_service, tzid=0):
+        if tzid:
+            sms_service.set_operation_ok(tzid)
+            sms_service.used_codes.clear()
         ctr = 0
         is_repeated = False
-        sms_service.set_operation_ok(tzid)
-        sms_service.used_codes.clear()
         self.status_bar.set('Запрашиваю новый номер...')
         tzid = sms_service.request_new_number()
         number = sms_service.get_number(tzid)
@@ -216,6 +228,7 @@ class MainWindow():
             with open('steamreg_key.txt', 'r') as f:
                 key, login = f.read().partition(':')[::2]
                 resp = requests.post('https://shamanovski.pythonanywhere.com/',
+                                     verify=False,
                                      data={
                                              'login': login,
                                              'key': key,
@@ -228,12 +241,14 @@ class MainWindow():
 
         return True
 
+
     def check_license(self, frame):
         key, login = self.license_key_entry.get(), self.login_entry.get()
         if not all((key, login)):
             showwarning('Ошибка', 'Заполните все поля')
             return
         resp = requests.post('https://shamanovski.pythonanywhere.com/',
+                             verify=False,
                              data={
                                      'login': login,
                                      'key': key,
@@ -249,7 +264,7 @@ class MainWindow():
 
         top = Toplevel(frame)
         top.title("Успешно!")
-        top.geometry('300x60')
+        top.geometry('230x50')
         msg = ('Программа активирована. Приятного пользования!')
         msg = Message(top, text=msg, aspect=500)
         msg.grid()
@@ -264,10 +279,10 @@ class MainWindow():
             raise OSError('Не удается авторизовать устройство. Обратитесь в тех.поддержку.')
         return hex(mac)
 
-    @staticmethod
-    def create_thread(func):
+
+    def create_thread(self):
         if len(threading.enumerate()) == 1:
-            threading.Thread(target=func).start()
+            threading.Thread(target=self.run_process).start()
 
 
     def save_data(self, mobguard_data, login, passwd, number):
@@ -311,11 +326,13 @@ class MainWindow():
 
 
     def generate_accounts(self):
-        def generator():
-            self.status_bar.set('Создаю акканут. Могу тормозить т.к. решаю капчи...')
-            yield self.steamreg.create_account()
+        self.accounts = self.accounts_generator()
 
-        self.accounts = generator()
+
+    def accounts_generator(self):
+        for _ in range(1000):
+            self.status_bar.set('Создаю аккаунт, решаю капчи...')
+            yield self.steamreg.create_account()
 
 
     def load_file(self, filename):
@@ -353,5 +370,6 @@ class MainWindow():
 
 root = Tk()
 window = MainWindow(root)
+root.iconbitmap('app.ico')
 root.title('Steam Auto Authenticator v0.1')
 root.mainloop()
