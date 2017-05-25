@@ -93,6 +93,20 @@ class SteamRegger:
 
 
 	@staticmethod
+	def has_phone_attached(steam_client):
+		sessionid = steam_client.session.cookies.get(
+					'sessionid', domain='steamcommunity.com')
+		data = {
+		'op': 'has_phone',
+		'arg': None,
+		'sessionid': sessionid
+		}
+		response = steam_client.session.post(
+			'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+		return response['has_phone']
+
+
+	@staticmethod
 	def steam_checksms_request(steam_client, sms_code):
 		sessionid = steam_client.session.cookies.get(
 					'sessionid', domain='steamcommunity.com')
@@ -248,7 +262,7 @@ class SteamRegger:
 		chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
 		func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(2, 4))))
 		login_name, password, email = (next(credential_generator(chr_sets)) for _ in range(3))
-		email += '@yahoo.com'
+		email += '@bubblemail.xyz'
 		while True:
 			r = session.post(
 				'https://store.steampowered.com/join/checkavail/?accountname={}&count=1' \
