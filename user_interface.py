@@ -17,7 +17,7 @@ from pkgutil import iter_modules
 
 installed_modules = [i[1] for i in iter_modules()]
 
-for module in ('requests', 'bs4'):
+for module in ('requests', 'bs4', 'rsa'):
     if not module in installed_modules:
         os.system('pip install %s' % module)
 
@@ -66,9 +66,9 @@ class MainWindow():
 
         self.filename = None
         self.manifest = None
+        self.accounts = None
         self.autoreg = IntVar()
         self.import_mafile = IntVar()
-        self.accounts = []
         self.steamreg = SteamRegger()
 
         menubar = Menu(parent)
@@ -147,23 +147,31 @@ class MainWindow():
             return
 
         sms_service = OnlineSimApi(onlinesim_api_key)
+        ctr = 0
+        tzid = 0
         try:
-            tzid, number, is_repeated, ctr = self.get_new_number(sms_service)
             for data in self.accounts:
-                if ctr == numbers_per_account:
+                if ctr == numbers_per_account or ctr == 0:
                     tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
 
                 login, passwd = data[:2]
                 logger.info('account data: %s %s', login, passwd)
-                self.log_box.insert(END, 'Привязываю Guard к аккаунту: %s:%s' % (login, passwd))
+                self.log_box.insert(END, 'Привязываю Guard к аккаунту: %s %s' % (login, passwd))
                 self.status_bar.set('Логинюсь в аккаунт...')
-                steam_client = self.steamreg.mobile_login(login, passwd)
-
+                try:
+                    steam_client = self.steamreg.mobile_login(login, passwd)
+                except SteamAuthError as err:
+                    self.log_box.insert(END, err)
+                    continue
 
                 while True:
                     self.status_bar.set('Делаю запрос Steam на добавление номера...')
                     is_number_valid = self.steamreg.steam_addphone_request(steam_client, number)
                     if not is_number_valid:
+                        if self.steamreg.has_phone_attached(steam_client):
+                            self.log_box.insert(END, 'К аккаунту %s уже привязан номер' % login)
+                            break
+
                         self.log_box.insert(END, 'Стим сообщил о том, что номер не подходит')
                         tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                         continue
@@ -176,7 +184,7 @@ class MainWindow():
                         continue
                     success = self.steamreg.steam_checksms_request(steam_client, sms_code)
                     if not success:
-                        raise Exception('Неверный SMS код. Обратись ко мне с этой ошибкой')
+                        raise OnlineSimError('Неверный SMS код. Обратитесь в тех.поддержку с этой ошибкой')
 
                     self.status_bar.set('Делаю запрос на привязку гуарда...')
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
@@ -189,8 +197,11 @@ class MainWindow():
                     success = self.steamreg.steam_finalize_authenticator_request(
                         steam_client, mobguard_data, sms_code)
                     if not success:
-                        raise Exception('Неверный SMS код. Обратись ко мне с этой ошибкой')
+                        raise OnlineSimError('Неверный SMS код. Обратитесь в тех.поддержку с этой ошибкой')
                     break
+
+                if not is_number_valid:
+                    continue
 
                 self.save_data(mobguard_data, login, passwd, number)
                 self.log_box.insert(END, 'Guard успешно привязан: ' + login)
@@ -199,8 +210,6 @@ class MainWindow():
 
         except OnlineSimError as err:
             showwarning("Ошибка onlinesim.ru", err, parent=self.parent)
-        except SteamAuthError as err:
-            self.log_box.insert(END, err)
         except SteamCaptchaError as err:
             showwarning('Ошибка', err)
         except Exception:
@@ -209,7 +218,7 @@ class MainWindow():
             self.status_bar.set('Готов...')
 
 
-    def get_new_number(self, sms_service, tzid=0):
+    def get_new_number(self, sms_service, tzid):
         if tzid:
             sms_service.set_operation_ok(tzid)
             sms_service.used_codes.clear()
@@ -228,7 +237,6 @@ class MainWindow():
             with open('steamreg_key.txt', 'r') as f:
                 key, login = f.read().partition(':')[::2]
                 resp = requests.post('https://shamanovski.pythonanywhere.com/',
-                                     verify=False,
                                      data={
                                              'login': login,
                                              'key': key,
@@ -248,7 +256,6 @@ class MainWindow():
             showwarning('Ошибка', 'Заполните все поля')
             return
         resp = requests.post('https://shamanovski.pythonanywhere.com/',
-                             verify=False,
                              data={
                                      'login': login,
                                      'key': key,
@@ -331,13 +338,19 @@ class MainWindow():
 
     def accounts_generator(self):
         for _ in range(1000):
-            self.status_bar.set('Создаю аккаунт, решаю капчи...')
-            yield self.steamreg.create_account()
+            new_accounts = []
+            for _ in range(int(self.numbers_per_account.get())):
+                self.status_bar.set('Создаю аккаунт, решаю капчи...')
+                login, passwd = self.steamreg.create_account()
+                new_accounts.append((login, passwd))
+                self.log_box.insert(END, 'Аккаунт зарегистрирован: %s:%s' % (login, passwd))
+            for account in new_accounts:
+                yield account
 
 
     def load_file(self, filename):
+        self.accounts = []
         self.filename = filename
-        self.accounts.clear()
         try:
             with open(self.filename, 'r') as f:
                 for acc_item in f.readlines():
