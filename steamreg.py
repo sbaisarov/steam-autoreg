@@ -265,8 +265,7 @@ class SteamRegger:
 		email += '@bubblemail.xyz'
 		while True:
 			r = session.post(
-				'https://store.steampowered.com/join/checkavail/?accountname={}&count=1' \
-				.format(login_name)).json()
+				'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'.format(login_name)).json()
 			logger.info(str(r))
 			if r['bAvailable']:
 				break
