@@ -14,8 +14,7 @@ import threading
 import os
 from pkgutil import iter_modules
 
-
-installed_modules = [i[1] for i in iter_modules()]
+installed_modules = [item[1] for item in iter_modules()]
 
 for module in ('requests', 'bs4', 'rsa'):
     if not module in installed_modules:
@@ -26,19 +25,6 @@ import requests
 from steampy.guard import generate_one_time_code
 from steamreg import *
 from sms_services import *
-
-logging.getLogger("requests").setLevel(logging.ERROR)
-logger = logging.getLogger()
-formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-handler = logging.FileHandler('logs.txt', encoding='utf-8')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
-
-def uncaught_exceptions_handler(type, value, tb):
-    logger.critical("Uncaught exception: {0} {1} {2}".format(type, value, traceback.format_tb(tb)))
-
-sys.excepthook = uncaught_exceptions_handler
 
 
 class MainWindow():
@@ -92,7 +78,7 @@ class MainWindow():
         ctr_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
 
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
-                                          variable=self.autoreg, command=self.generate_accounts)
+                                          variable=self.autoreg)
         autoreg_checkbutton.grid(row=2, column=0, sticky=W)
         mafile_checkbutton = Checkbutton(frame, text='Импортировать maFile в SDA',
                                          variable=self.import_mafile)
@@ -147,12 +133,15 @@ class MainWindow():
             return
 
         sms_service = OnlineSimApi(onlinesim_api_key)
-        ctr = 0
         tzid = 0
+        ctr = 0
+        is_first_iteration = True
+        accounts = self.accounts_generator() if self.autoreg.get() else self.accounts
         try:
-            for data in self.accounts:
-                if ctr == numbers_per_account or ctr == 0:
+            for data in accounts:
+                if ctr == numbers_per_account or is_first_iteration:
                     tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
+                    is_first_iteration = False
 
                 login, passwd = data[:2]
                 logger.info('account data: %s %s', login, passwd)
@@ -184,7 +173,7 @@ class MainWindow():
                         continue
                     success = self.steamreg.steam_checksms_request(steam_client, sms_code)
                     if not success:
-                        raise OnlineSimError('Неверный SMS код. Обратитесь в тех.поддержку с этой ошибкой')
+                        raise SteamAuthError('Неверный SMS код. Обратитесь в тех.поддержку с этой ошибкой')
 
                     self.status_bar.set('Делаю запрос на привязку гуарда...')
                     mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
@@ -197,7 +186,7 @@ class MainWindow():
                     success = self.steamreg.steam_finalize_authenticator_request(
                         steam_client, mobguard_data, sms_code)
                     if not success:
-                        raise OnlineSimError('Неверный SMS код. Обратитесь в тех.поддержку с этой ошибкой')
+                        raise SteamAuthError('Неверный SMS код. Обратитесь в тех.поддержку с этой ошибкой')
                     break
 
                 if not is_number_valid:
@@ -213,7 +202,9 @@ class MainWindow():
         except SteamCaptchaError as err:
             showwarning('Ошибка', err)
         except Exception:
-            showwarning('Ошибка', traceback.format_exc())
+            error = traceback.format_exc()
+            showwarning('Ошибка', error)
+            logger.critical(error)
         finally:
             self.status_bar.set('Готов...')
 
@@ -289,7 +280,9 @@ class MainWindow():
 
     def create_thread(self):
         if len(threading.enumerate()) == 1:
-            threading.Thread(target=self.run_process).start()
+            t = threading.Thread(target=self.run_process)
+            t.daemon = True
+            t.start()
 
 
     def save_data(self, mobguard_data, login, passwd, number):
@@ -332,10 +325,6 @@ class MainWindow():
             return self.load_file(filename)
 
 
-    def generate_accounts(self):
-        self.accounts = self.accounts_generator()
-
-
     def accounts_generator(self):
         for _ in range(1000):
             new_accounts = []
@@ -343,7 +332,7 @@ class MainWindow():
                 self.status_bar.set('Создаю аккаунт, решаю капчи...')
                 login, passwd = self.steamreg.create_account()
                 new_accounts.append((login, passwd))
-                self.log_box.insert(END, 'Аккаунт зарегистрирован: %s:%s' % (login, passwd))
+                self.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
             for account in new_accounts:
                 yield account
 
@@ -381,8 +370,26 @@ class MainWindow():
             self.manifest_data = json.load(f)
 
 
-root = Tk()
-window = MainWindow(root)
-root.iconbitmap('app.ico')
-root.title('Steam Auto Authenticator v0.1')
-root.mainloop()
+    def app_quit(self, *ignore):
+        self.parent.destroy()
+
+
+if __name__ == '__main__':
+    logging.getLogger("requests").setLevel(logging.ERROR)
+    logger = logging.getLogger()
+    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+    handler = logging.FileHandler('logs.txt', encoding='utf-8')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+    def uncaught_exceptions_handler(type, value, tb):
+        logger.critical("Uncaught exception: {0} {1} {2}".format(type, value, traceback.format_tb(tb)))
+    sys.excepthook = uncaught_exceptions_handler
+
+    root = Tk()
+    window = MainWindow(root)
+    root.iconbitmap('app.ico')
+    root.title('Steam Auto Authenticator v0.1')
+    root.protocol("WM_DELETE_WINDOW", window.app_quit)
+    root.mainloop()
