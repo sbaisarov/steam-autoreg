@@ -291,18 +291,18 @@ class MainWindow():
         if not os.path.exists('аккаунты'):
             os.makedirs('аккаунты')
 
-        txt_path = os.path.join('аккаунты', steamid + '.txt')
+        txt_path = os.path.join('аккаунты', login + '.txt')
         with open(txt_path, 'w') as f:
             f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
                      login, passwd, str(datetime.date.today()), number))
-        mafile_path = os.path.join('аккаунты', steamid + '.maFile')
+        mafile_path = os.path.join('аккаунты', login + '.maFile')
 
         if self.import_mafile.get():
-            mafile_path = os.path.join(os.path.dirname(self.manifest), steamid + '.maFile')
+            mafile_path = os.path.join(os.path.dirname(self.manifest), login + '.maFile')
             data = {
             "encryption_iv": None,
             "encryption_salt": None,
-            "filename": steamid + '.maFile',
+            "filename": login + '.maFile',
             "steamid": int(steamid)
             }
             self.manifest_data["entries"].append(data)
