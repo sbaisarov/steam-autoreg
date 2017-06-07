@@ -115,12 +115,18 @@ class SteamRegger:
 		'arg': sms_code,
 		'sessionid': sessionid
 		}
-		while True:
+		attempts = 0
+		while attempts < 10:
 			response = steam_client.session.post(
 				'https://steamcommunity.com/steamguard/phoneajax', data=data)
 			logger.info(response.text)
 			if not response.json()['fatal']:
 				break
+			time.sleep(3)
+			attempts += 1
+
+		if response.json()['fatal'}]:
+			raise SteamAuthError('Steam Service is not available at the moment')
 
 		return response.json()['success']
 
@@ -184,9 +190,9 @@ class SteamRegger:
 
 		return fin_resp['success']
 
-	def get_api_key(self, mafile, wallet_code):
+	def make_account_unlimited(self, mobguard_data, wallet_code, get_api_key=False):
 		steam_client = SteamClient(None, self.proxy)
-		steam_client.login(mafile['account_name'], mafile['account_password'], mafile)
+		steam_client.login(mobguard_data['account_name'], mobguard_data['account_password'], mobguard_data)
 		data = {
 		'wallet_code': wallet_code,
 		'CreateFromAddress': '1',
@@ -203,18 +209,19 @@ class SteamRegger:
 		steam_client.session.post('https://store.steampowered.com/account/confirmredeemwalletcode/',
 								  data={'wallet_code': wallet_code})
 
-		sessionid = steam_client.session.cookies.get(
-					'sessionid', domain='steamcommunity.com')
-		data = {
-		'domain': 'domain.com',
-		'agreeToTerms': 'agreed',
-		'sessionid': sessionid,
-		'Submit': 'Register'
-		}
-		time.sleep(10)
-		r = steam_client.session.post('https://steamcommunity.com/dev/registerkey', data=data)
-		key = re.search('Key: (.+)</p', r.text).group(1)
-		return key
+		if get_api_key:
+			sessionid = steam_client.session.cookies.get(
+						'sessionid', domain='steamcommunity.com')
+			data = {
+			'domain': 'domain.com',
+			'agreeToTerms': 'agreed',
+			'sessionid': sessionid,
+			'Submit': 'Register'
+			}
+			time.sleep(10)
+			r = steam_client.session.post('https://steamcommunity.com/dev/registerkey', data=data)
+			key = re.search('Key: (.+)</p', r.text).group(1)
+			return key
 
 
 	def create_account(self):
