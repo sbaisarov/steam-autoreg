@@ -23,7 +23,6 @@ class SteamRegger:
     def __init__(self, proxy=None):
         self.proxy = proxy
 
-
     def registrate_account(self):
         mafile = {}
         login_name, password = self.create_account()
@@ -226,40 +225,37 @@ class SteamRegger:
             return key
 
 
-    def create_account(self):
-        def credential_generator(chr_sets):
+    def create_account(self, rucaptcha_api_key):
+        def generate_credential():
             random.shuffle(chr_sets)
             credential = ''.join(map(func, chr_sets))
-            yield credential
+            return credential
+
+        def generate_captcha():
+            gid = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1',
+                               headers={'Host': 'store.steampowered.com'}).json()['gid']
+            captcha_img = session.get('https://store.steampowered.com/public/captcha.php?gid={}'
+                                       .format(gid)).content
+            resp = requests.post('http://rucaptcha.com/in.php',
+                                          files={'file': ('captcha', captcha_img, 'image/png')},
+                                          data={'key': rucaptcha_api_key})
+            captcha_id = resp.text.partition('|')[2]
+            return captcha_id, gid
 
 
-        def resolve_captcha():
-            def generate_captcha():
-                gid = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1',
-                                   headers={'Host': 'store.steampowered.com'}).json()['gid']
-                captcha_img = session.get('https://store.steampowered.com/public/captcha.php?gid={}'.format(gid)).content
-                captcha_id = requests.post('http://rucaptcha.com/in.php',
-                                              files={'file': ('captcha', captcha_img, 'image/png')},
-                                              data={'key': 'ac530c64ce7abad34972decbece2c844'}).text.partition('|')[2]
-                return captcha_id, gid
-
-            captcha_id, gid = generate_captcha()
-            rucaptcha_key = 'ac530c64ce7abad34972decbece2c844'
-
+        def resolve_captcha(captcha_id, gid):
             while True:
                 time.sleep(10)
-                r = requests.post(
-                        'http://rucaptcha.com/res.php?key={}&action=get&id={}'
-                        .format(rucaptcha_key, captcha_id))
+                r = requests.post('http://rucaptcha.com/res.php?key={}&action=get&id={}'
+                                   .format(rucaptcha_api_key, captcha_id))
                 logger.info(r.text)
                 if 'CAPCHA_NOT_READY' in r.text:
                     continue
                 elif 'ERROR_CAPTCHA_UNSOLVABLE' in r.text:
-                    captcha_id, gid = generate_captcha()
-                    continue
+                    return None
                 break
             resolved_captcha = r.text.partition('|')[2].replace('amp;', '')
-            return resolved_captcha, gid
+            return resolved_captcha
 
         session = requests.Session()
         if self.proxy:
@@ -270,28 +266,31 @@ class SteamRegger:
         # generate and check validity of the login name
         chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
         func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(2, 4))))
-        login_name, password, email = (next(credential_generator(chr_sets)) for _ in range(3))
+        login_name, password, email = [generate_credential() for _ in range(3)]
         email += '@bubblemail.xyz'
         while True:
-            r = session.post(
-                'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'.format(login_name)).json()
+            r = session.post('https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
+                              .format(login_name)).json()
             logger.info(str(r))
             if r['bAvailable']:
                 break
-            else:
-                login_name = next(credential_generator(chr_sets))
+            login_name = generate_credential()
+            time.sleep(3)
         while True:
-            captcha, gid = resolve_captcha()
+            captcha_id, gid = generate_captcha()
+            captcha_text = resolve_captcha(captcha_id, gid)
+            if not captcha_text:
+                continue
             data = {
-            'accountname': login_name,
-            'password': password,
-            'email': email,
-            'captchagid': gid,
-            'captcha_text': captcha,
-            'i_agree': '1',
-            'ticket': '',
-            'count': '32',
-            'lt': '0'
+                'accountname': login_name,
+                'password': password,
+                'email': email,
+                'captchagid': gid,
+                'captcha_text': captcha_text,
+                'i_agree': '1',
+                'ticket': '',
+                'count': '32',
+                'lt': '0'
             }
             try:
                 resp = session.post('https://store.steampowered.com/join/createaccount/',
@@ -300,5 +299,15 @@ class SteamRegger:
                 continue
             if resp['bSuccess']:
                 break
-            logger.info('The resolved captcha is wrong, trying again...')
+            logger.error('Captcha text: %s. Captcha gid: %s. Response: %s',
+                         captcha_text, gid, resp)
+            r = requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
+                               .format(rucaptcha_api_key, captcha_id))
+
         return login_name, password
+
+if __name__ == '__main__':
+    foo = SteamRegger()
+    login, passwd, session = foo.create_account()
+    sessionid = session.cookies.get('sessionid', domain='store.steampowered.com')
+    print(sessionid)
