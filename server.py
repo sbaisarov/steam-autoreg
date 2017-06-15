@@ -61,8 +61,7 @@ def check_device(data, key, ip):
         city = get_city_from_ip(ip)
         if city != stored_city:
             logger.warning('The ip and the city are different (%s, %s). '
-                'The request has been declined: %s', ip, city, db_data)
-            return False
+                            'Data from database: %s', ip, city, db_data)
         logger.warning('IPs are different: %s-%s', ip, stored_ip)
 
     logger.info('The device has been authorized successfully: %s', db_data)
