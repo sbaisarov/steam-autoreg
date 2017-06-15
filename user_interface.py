@@ -68,7 +68,6 @@ class MainWindow():
         parent['menu'] = menubar
         menubar.add_command(label="Аккаунты", command=self.accounts_open)
         menubar.add_command(label="SDA Manifest", command=self.manifest_open)
-        menubar.add_command(label='Wallet Codes', command=self.wallet_codes_open)
 
         self.onlinesim_api_key = StringVar()
         onlinesim_apikey_label = Label(frame, text='onlinesim api key:')
@@ -164,11 +163,12 @@ class MainWindow():
                     logger.info('account data: %s %s', login, passwd)
                     self.save_unattached_account(login, passwd)
                 steam_client = SteamClient()
-                steam_client.login(login, passwd)
-                resp = steam_client.session.get('http://store.steampowered.com')
-                data['sessionid'] = steam_client.session.cookies.get('sessionid',
-                                                                     domain='store.steampowered.com')
-                steam_client.session.post('http://store.steampowered.com/checkout/addfreelicense', data=data)
+                while True:
+                    try:
+                        steam_client.login(login, passwd)
+                        break
+                    except AttributeError:
+                        time.sleep(3)
                 self.activate_steam_account(steam_client)
                 self.remove_intentory_privacy(steam_client)
 
@@ -176,11 +176,6 @@ class MainWindow():
             showwarning("Ошибка", "Укажите количество аккаунтов для регистрации")
             return
 
-        data = {
-            'action': 'add_to_cart',
-            'subid': '183411',
-            'snr': '1_5_9__403'
-        }
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
         rucaptcha_api_key = self.rucaptcha_api_key.get()
         amount = self.new_accounts_amount.get()
