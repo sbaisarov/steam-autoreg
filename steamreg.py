@@ -239,6 +239,9 @@ class SteamRegger:
             resp = requests.post('http://rucaptcha.com/in.php',
                                           files={'file': ('captcha', captcha_img, 'image/png')},
                                           data={'key': rucaptcha_api_key})
+            if 'ERROR_ZERO_BALANCE' in resp.text:
+                logger.critical(resp.text)
+                quit()
             captcha_id = resp.text.partition('|')[2]
             return captcha_id, gid
 
