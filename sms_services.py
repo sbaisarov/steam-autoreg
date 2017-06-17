@@ -1,6 +1,7 @@
 import requests
 import re
 import time
+import json
 import logging
 
 class OnlineSimError(Exception): pass
@@ -16,10 +17,17 @@ class OnlineSimApi():
 
 
     def request_new_number(self):
-        resp = requests.post('http://onlinesim.ru/api/getNum.php',
-                             data={'service': 'Steam',
-                             'apikey': self.api_key,
-                             'form': '1'}).json()
+        url = 'http://onlinesim.ru/api/getNum.php'
+        while True:
+            try:
+                resp = requests.post('http://onlinesim.ru/api/getNum.php',
+                                     data={'service': 'Steam',
+                                     'apikey': self.api_key,
+                                     'form': '1'}).json()
+                break
+            except json.decoder.JSONDecodeError as err:
+                logger.error('%s. URL: %s', err, url)
+                time.sleep(3)
         try:
             tzid = resp['tzid']
         except KeyError:
