@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class SteamAuthError(Exception): pass
 class SteamCaptchaError(Exception): pass
+class RuCaptchaError(Exception): pass
 
 class SteamRegger:
 
