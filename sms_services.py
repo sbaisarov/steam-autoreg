@@ -15,19 +15,10 @@ class OnlineSimApi():
         self.api_key = api_key
         self.used_codes = set()
 
-
     def request_new_number(self):
         url = 'http://onlinesim.ru/api/getNum.php'
-        while True:
-            try:
-                resp = requests.post('http://onlinesim.ru/api/getNum.php',
-                                     data={'service': 'Steam',
-                                     'apikey': self.api_key,
-                                     'form': '1'}).json()
-                break
-            except json.decoder.JSONDecodeError as err:
-                logger.error('%s. URL: %s', err, url)
-                time.sleep(3)
+        data = {'service': 'Steam', 'apikey': self.api_key, 'form': '1'}
+        resp = self._send_request(url, data)
         try:
             tzid = resp['tzid']
         except KeyError:
@@ -36,10 +27,9 @@ class OnlineSimApi():
 
 
     def get_number(self, tzid):
-        resp = requests.post('http://onlinesim.ru/api/getState.php',
-                             data={'message_to_code': 1, 'tzid': tzid,
-                                   'apikey': self.api_key}).json()
-        logger.info(str(resp))
+        url = 'http://onlinesim.ru/api/getState.php'
+        data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
+        resp = self._send_request(url, data)
         try:
             number = resp[0]['number']
         except (KeyError, IndexError):
@@ -49,14 +39,15 @@ class OnlineSimApi():
 
     def get_sms_code(self, tzid, is_repeated=False):
         attempts = 0
+        url = 'http://onlinesim.ru/api/getState.php'
+        data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
         while attempts < 30:
+            attempts += 1
+            print(attempts)
             time.sleep(3)
             if is_repeated:
                 self.request_repeated_number_usage(tzid)
-            resp = requests.post('http://onlinesim.ru/api/getState.php',
-                                 data={'message_to_code': 1, 'tzid': tzid,
-                                       'apikey': self.api_key}).json()
-            logger.info(str(resp))
+            resp = self._send_request(url, data)
             sms_code = resp[0].get('msg', None)
             if is_repeated:
                 if sms_code not in self.used_codes:
@@ -66,21 +57,36 @@ class OnlineSimApi():
                 if sms_code:
                     self.used_codes.add(sms_code)
                     return sms_code
-            attempts += 1
 
         return None
 
 
     def set_operation_ok(self, tzid):
-        resp = requests.post('http://onlinesim.ru/api/setOperationOk.php',
-                             data={'tzid': tzid, 'apikey': self.api_key})
-        logger.info(resp.text)
+        url = 'http://onlinesim.ru/api/setOperationOk.php'
+        data = {'tzid': tzid, 'apikey': self.api_key}
+        self._send_request(url, data)
 
 
     def request_repeated_number_usage(self, tzid):
-        resp = requests.post('http://onlinesim.ru/api/setOperationRevise.php',
-                                 data={'tzid': tzid, 'apikey': self.api_key})
-        logger.info(resp.text)
+        url = 'http://onlinesim.ru/api/setOperationRevise.php'
+        data = {'tzid': tzid, 'apikey': self.api_key}
+        self._send_request(url, data)
+
+    @staticmethod
+    def _send_request(url, data):
+        while True:
+            try:
+                resp = requests.post(url, data=data, timeout=3)
+                resp = resp.json()
+                break
+            except json.decoder.JSONDecodeError:
+                logger.error('Сработала CloudFlare защита: %s. Код ошибки: %s', url, resp.status_code)
+                time.sleep(3)
+            except requests.exceptions.Timeout:
+                logger.error('Не удалось получить ответ от: %s', url)
+
+        logger.info(str(resp))
+        return resp
 
 
 class SmsActivateApi():
