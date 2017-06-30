@@ -20,6 +20,7 @@ if 'requests' not in installed_modules:
 
 import requests
 
+from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
 from steamreg import *
 from sms_services import *
@@ -32,7 +33,7 @@ if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
 
-lock = threading.Lock()
+steamreg = SteamRegger()
 
 class MainWindow():
 
@@ -46,8 +47,6 @@ class MainWindow():
         if not success:
             self.deploy_activation_widgets(frame)
             return
-
-        self.steamreg = SteamRegger()
 
         self.manifest_path = None
         self.accounts_path = None
@@ -174,7 +173,8 @@ class MainWindow():
             self.status_bar.set('Готов...')
 
     def registrate_without_binding(self):
-        if not self.new_accounts_amount.get():
+        new_accounts_amount = self.new_accounts_amount.get()
+        if not new_accounts_amount:
             showwarning("Ошибка", "Укажите количество аккаунтов для регистрации")
             return
 
@@ -182,13 +182,14 @@ class MainWindow():
         rucaptcha_api_key = self.rucaptcha_api_key.get()
         threads = []
         for _ in range(20):
-            t = threading.Thread(target=self.registrate_account)
-            t.daemon = True
+            t = RegistrationThread(self, new_accounts_amount) # transfer main window object
             t.start()
             threads.append(t)
 
         for thread in threads:
             thread.join()
+
+        RegistrationThread.counter = 0
 
     def registrate_with_binding(self):
         onlinesim_api_key = self.onlinesim_api_key.get()
@@ -219,8 +220,6 @@ class MainWindow():
         accounts = self.accounts_generator() if self.autoreg.get() else self.accounts
         for data in accounts:
             login, passwd = data[:2]
-            logger.info('account data: %s %s', login, passwd)
-
             if ctr == numbers_per_account or is_first_iteration:
                 tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                 is_first_iteration = False
@@ -287,34 +286,27 @@ class MainWindow():
             self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
     def accounts_generator(self):
+        ctr = 0
+        new_accounts_amount = self.new_accounts_amount.get()
+        numbers_per_account = self.numbers_per_account.get()
         while ctr < new_accounts_amount:
+            self.status_bar.set('Создаю аккаунты, решаю капчи...')
             new_accounts = []
-            for _ in range(self.numbers_per_account.get()):
-                self.status_bar.set('Создаю аккаунт, решаю капчу...')
-                login, passwd = self.steamreg.create_account(self.rucaptcha_api_key.get())
-                new_accounts.append((login, passwd))
-                self.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
+            threads = []
+            for _ in range(numbers_per_account):
+                t = RegistrationThread(self, numbers_per_account, new_accounts) # transfer main window object
+                t.start()
+                threads.append(t)
                 ctr += 1
                 if ctr == new_accounts_amount:
                     break
+
+            for thread in threads:
+                thread.join()
+            RegistrationThread.counter = 0
+
             for login, passwd in new_accounts:
                 yield login, passwd
-
-    def registrate_account(self):
-        login, passwd = self.steamreg.create_account(rucaptcha_api_key)
-        with lock:
-            self.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
-            logger.info('account data: %s %s', login, passwd)
-            self.save_unattached_account(login, passwd)
-        steam_client = SteamClient()
-        while True:
-            try:
-                steam_client.login(login, passwd)
-                break
-            except AttributeError:
-                time.sleep(3)
-        self.activate_steam_account(steam_client)
-        self.remove_intentory_privacy(steam_client)
 
     def get_new_number(self, sms_service, tzid):
         if tzid:
@@ -435,11 +427,6 @@ class MainWindow():
         with open(mafile_path, 'w') as f:
             json.dump(mobguard_data, f)
 
-    def save_unattached_account(self, login, passwd):
-        with open('accounts_unattached.txt', 'a+') as f:
-            f.write('%s:%s\n' % (login, passwd))
-
-
     def accounts_open(self):
         dir = (os.path.dirname(self.accounts_path)
                if self.accounts_path is not None else '.')
@@ -483,36 +470,57 @@ class MainWindow():
         except (EnvironmentError, TypeError):
             pass
 
-    @staticmethod
-    def activate_steam_account(steam_client):
-        url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
-        data = {
-            'sessionID': steam_client.get_session_id(),
-            'type': 'profileSave',
-            'personaName': steam_client.login_name,
-            'summary': 'No information given.',
-            'primary_group_steamid': '0'
-        }
-        steam_client.session.post(url, data=data)
-
-    @staticmethod
-    def remove_intentory_privacy(steam_client):
-        url = 'http://steamcommunity.com/profiles/{}/edit/settings'.format(steam_client.steamid)
-        data = {
-            'sessionID': steam_client.get_session_id(),
-            'type': 'profileSettings',
-            'privacySetting': '3',
-            'commentSetting': 'commentanyone',
-            'inventoryPrivacySetting': '3',
-            'inventoryGiftPrivacy': '1',
-        }
-        steam_client.session.post(url, data=data)
-
     def app_quit(self, *ignore):
         with open('database/userdata.txt', 'w') as f:
             json.dump(self.userdata, f)
 
         self.parent.destroy()
+
+class RegistrationThread(threading.Thread):
+    counter = 0
+    lock = threading.Lock()
+
+    def __init__(self, window, amount, result=None):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.window = window
+        self.amount = amount
+        self.result = result
+
+    def run(self):
+        while self.__class__.counter < self.amount:
+            self.__class__.counter += 1
+            self.registrate_account()
+
+    def registrate_account(self):
+        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get())
+        with self.lock:
+            self.window.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
+            logger.info('account data: %s %s', login, passwd)
+            self.save_unattached_account(login, passwd)
+        steam_client = SteamClient()
+        while True:
+            try:
+                steam_client.login(login, passwd)
+                break
+            except AttributeError:
+                time.sleep(3)
+        steamreg.activate_steam_account(steam_client)
+        steamreg.remove_intentory_privacy(steam_client)
+        if self.result is not None:
+            self.result.append((login, passwd))
+
+    def save_unattached_account(self, login, passwd):
+        with open('accounts_unattached.txt', 'a+') as f:
+            f.write('%s:%s\n' % (login, passwd))
+
+class BindingThread(threading.Thread):
+
+    def __init__(self, window):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.window = window
+
 
 if __name__ == '__main__':
     logging.getLogger("requests").setLevel(logging.ERROR)
