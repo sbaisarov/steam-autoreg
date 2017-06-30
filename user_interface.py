@@ -287,6 +287,8 @@ class MainWindow():
             self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
     def accounts_generator(self):
+        ctr = 0
+        new_accounts_amount = self.new_accounts_amount.get()
         while ctr < new_accounts_amount:
             new_accounts = []
             for _ in range(self.numbers_per_account.get()):
@@ -410,11 +412,11 @@ class MainWindow():
 
     def save_attached_account(self, mobguard_data, login, passwd, number):
         steamid = mobguard_data['Session']['SteamID']
-        accounts_dir = 'new_accounts' if self.autoreg() else 'old_accounts'
+        accounts_dir = 'new_accounts' if self.autoreg.get() else 'old_accounts'
         txt_path = os.path.join(accounts_dir, login + '.txt')
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
 
-        with open(txt_path, 'w') as f:
+        with open(txt_path, 'w', encoding='utf-8') as f:
             f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
                      login, passwd, str(datetime.date.today()), number))
         with open('accounts_attached.txt', 'a+') as f:
