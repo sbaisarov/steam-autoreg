@@ -251,6 +251,7 @@ class MainWindow():
                     self.log_box.insert(END, 'Не доходит SMS. Меняю номер...')
                     tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                     continue
+                mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
                 success = self.steamreg.steam_checksms_request(steam_client, sms_code)
                 if not success:
                     self.log_box.insert('Неверный SMS код. Пробую снова...')
@@ -260,25 +261,9 @@ class MainWindow():
             if not is_number_valid:
                 continue
 
-            while True:
-                self.status_bar.set('Делаю запрос на привязку гуарда...')
-                mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
-                self.status_bar.set('Жду SMS код...')
-                sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
-                if not sms_code:
-                    self.log_box.insert(END, 'Не доходит SMS. С аккаунта требуется удалить номер.')
-                    break
-
-                success = self.steamreg.steam_finalize_authenticator_request(
-                    steam_client, mobguard_data, sms_code)
-                if not success:
-                    self.log_box.insert('Неверный SMS код. Пробую снова...')
-                    continue
-                break
+            self.steamreg.steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code)
 
             ctr += 1
-            if not sms_code:
-                continue
 
             mobguard_data['account_password'] = passwd
             self.save_attached_account(mobguard_data, login, passwd, number)
