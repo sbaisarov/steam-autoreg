@@ -58,7 +58,7 @@ class MainWindow():
         self.onlinesim_api_key = StringVar()
         self.rucaptcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
-        self.numbers_per_account = IntVar()
+        self.accounts_per_number = IntVar()
 
         self.status_bar = StringVar()
 
@@ -87,7 +87,7 @@ class MainWindow():
 
         ctr_label = Label(frame, text='Количество аккаунтов на 1 номер:')
         ctr_label.grid(row=3, column=0, pady=5, sticky=W)
-        ctr_entry = Entry(frame, textvariable=self.numbers_per_account, width=1)
+        ctr_entry = Entry(frame, textvariable=self.accounts_per_number, width=2)
         ctr_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
@@ -127,8 +127,6 @@ class MainWindow():
         for attr, value in self.userdata.items():
             if attr == 'manifest_path':
                 self.load_manifest(value)
-            elif attr == 'accounts_path':
-                self.load_accounts(value)
             else:
                 obj = self.__getattribute__(attr)
                 obj.set(value)
@@ -146,31 +144,18 @@ class MainWindow():
         for field, value in self.__dict__.items():
             if field in ('status_bar', 'license'):
                 continue
-            if issubclass(value.__class__, Variable) or 'path' in field:
+            if issubclass(value.__class__, Variable) or 'manifest_path' in field:
                 try:
                     value = value.get()
                 except AttributeError:
                     pass
                 self.userdata[field] = value
 
-        try:
-            self.check_rucaptcha_key()
-            if self.mobile_bind.get():
-                self.registrate_with_binding()
-            else:
-                self.registrate_without_binding()
-        except OnlineSimError as err:
-            showwarning("Ошибка onlinesim.ru", err)
-        except RuCaptchaError as err:
-            showwarning("Ошибка rucaptcha.com", err)
-        except SteamCaptchaError as err:
-            showwarning('Ошибка', err)
-        except Exception as err:
-            error = traceback.format_exc()
-            showwarning('Ошибка.', error)
-            logger.critical(error)
-        finally:
-            self.status_bar.set('Готов...')
+        self.check_rucaptcha_key()
+        if self.mobile_bind.get():
+            self.registrate_with_binding()
+        else:
+            self.registrate_without_binding()
 
     def registrate_without_binding(self):
         new_accounts_amount = self.new_accounts_amount.get()
@@ -188,6 +173,11 @@ class MainWindow():
 
         for thread in threads:
             thread.join()
+            if thread.error:
+                error_origin, error_text = thread.error
+                showwarning("Ошибка %s" % error_origin, error_text)
+                self.status_bar.set('Готов...')
+                return
 
         RegistrationThread.counter = 0
 
@@ -204,121 +194,57 @@ class MainWindow():
             return
 
         try:
-            numbers_per_account = self.numbers_per_account.get()
-            if not 0 < numbers_per_account <= 7:
+            accounts_per_number = self.accounts_per_number.get()
+            if not 0 < accounts_per_number <= 20:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
                         "связанных с 1 номером (больше нуля но меньше 7-и).", parent=self.parent)
             return
 
-        sms_service = OnlineSimApi(onlinesim_api_key)
-        tzid = 0
-        ctr = 0
-        err = None
-        is_first_iteration = True
         accounts = self.accounts_generator() if self.autoreg.get() else self.accounts
-        for data in accounts:
-            login, passwd = data[:2]
-            if ctr == numbers_per_account or is_first_iteration:
-                tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
-                is_first_iteration = False
-
-            self.log_box.insert(END, 'Привязываю Guard к аккаунту: %s %s' % (login, passwd))
-            self.status_bar.set('Логинюсь в аккаунт...')
-            try:
-                steam_client = self.steamreg.mobile_login(login, passwd)
-            except SteamAuthError as err:
-                self.log_box.insert(END, err)
-                continue
-
-            while True:
-                self.status_bar.set('Делаю запрос Steam на добавление номера...')
-                is_number_valid = self.steamreg.steam_addphone_request(steam_client, number)
-                if not is_number_valid:
-                    if self.steamreg.has_phone_attached(steam_client):
-                        self.log_box.insert(END, 'К аккаунту %s уже привязан номер' % login)
-                        break
-
-                    self.log_box.insert(END, 'Стим сообщил о том, что номер не подходит')
-                    tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
-                    continue
-                self.status_bar.set('Жду SMS код...')
-                sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
-                is_repeated = True
-                if not sms_code:
-                    self.log_box.insert(END, 'Не доходит SMS. Меняю номер...')
-                    tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
-                    continue
-                success = self.steamreg.steam_checksms_request(steam_client, sms_code)
-                if not success:
-                    self.log_box.insert('Неверный SMS код. Пробую снова...')
-                    continue
-                break
-
-            if not is_number_valid:
-                continue
-
-            while True:
-                self.status_bar.set('Делаю запрос на привязку гуарда...')
-                mobguard_data = self.steamreg.steam_add_authenticator_request(steam_client)
-                self.status_bar.set('Жду SMS код...')
-                sms_code = sms_service.get_sms_code(tzid, is_repeated=is_repeated)
-                if not sms_code:
-                    self.log_box.insert(END, 'Не доходит SMS. С аккаунта требуется удалить номер.')
-                    break
-
-                success = self.steamreg.steam_finalize_authenticator_request(
-                    steam_client, mobguard_data, sms_code)
-                if not success:
-                    self.log_box.insert('Неверный SMS код. Пробую снова...')
-                    continue
-                break
+        threads = []
+        ctr = 0
+        sms_service = OnlineSimApi(onlinesim_api_key)
+        self.status_bar.set('Начинаю привязку...')
+        for account_package in accounts:
+            t = BindingThread(self, account_package, sms_service) # transfer main window object
+            t.start()
+            threads.append(t)
 
             ctr += 1
-            if not sms_code:
-                continue
-
-            mobguard_data['account_password'] = passwd
-            self.save_attached_account(mobguard_data, login, passwd, number)
-            self.activate_steam_account(steam_client)
-            self.remove_intentory_privacy(steam_client)
-            self.log_box.insert(END, 'Guard успешно привязан: ' + login)
+            if ctr == 3:
+                self.status_bar.set('Делаю привязку Mobile Guard...')
+                for thread in threads:
+                    thread.join()
+                    if thread.error:
+                        error_origin, error_text = thread.error
+                        showwarning("Ошибка %s" % error_origin, error_text)
+                        self.status_bar.set('Готов...')
+                        return
+                threads = []
+                ctr = 0
 
     def accounts_generator(self):
         ctr = 0
         new_accounts_amount = self.new_accounts_amount.get()
-        numbers_per_account = self.numbers_per_account.get()
+        accounts_per_number = self.accounts_per_number.get()
         while ctr < new_accounts_amount:
             self.status_bar.set('Создаю аккаунты, решаю капчи...')
             new_accounts = []
             threads = []
-            for _ in range(numbers_per_account):
-                t = RegistrationThread(self, numbers_per_account, new_accounts) # transfer main window object
+            for _ in range(accounts_per_number):
+                t = RegistrationThread(self, accounts_per_number, new_accounts) # transfer main window object
                 t.start()
                 threads.append(t)
                 ctr += 1
                 if ctr == new_accounts_amount:
                     break
-
             for thread in threads:
                 thread.join()
             RegistrationThread.counter = 0
 
-            for login, passwd in new_accounts:
-                yield login, passwd
-
-    def get_new_number(self, sms_service, tzid):
-        if tzid:
-            sms_service.set_operation_ok(tzid)
-            sms_service.used_codes.clear()
-        ctr = 0
-        is_repeated = False
-        self.status_bar.set('Запрашиваю новый номер...')
-        tzid = sms_service.request_new_number()
-        number = sms_service.get_number(tzid)
-        self.log_box.insert(END, 'Новый номер: ' + number)
-        return tzid, number, is_repeated, ctr
+            yield new_accounts
 
     def authorize_user(self):
         key = ''
@@ -400,33 +326,6 @@ class MainWindow():
             t.daemon = True
             t.start()
 
-    def save_attached_account(self, mobguard_data, login, passwd, number):
-        steamid = mobguard_data['Session']['SteamID']
-        accounts_dir = 'new_accounts' if self.autoreg() else 'old_accounts'
-        txt_path = os.path.join(accounts_dir, login + '.txt')
-        mafile_path = os.path.join(accounts_dir, login + '.maFile')
-
-        with open(txt_path, 'w') as f:
-            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
-                     login, passwd, str(datetime.date.today()), number))
-        with open('accounts_attached.txt', 'a+') as f:
-            f.write('%s:%s\n' % (login, passwd))
-
-        if self.import_mafile.get():
-            mafile_path = os.path.join(os.path.dirname(self.manifest_path), login + '.maFile')
-            data = {
-                "encryption_iv": None,
-                "encryption_salt": None,
-                "filename": login + '.maFile',
-                "steamid": int(steamid)
-            }
-            self.manifest_data["entries"].append(data)
-            with open(self.manifest_path, 'w') as f:
-                json.dump(self.manifest_data, f)
-
-        with open(mafile_path, 'w') as f:
-            json.dump(mobguard_data, f)
-
     def accounts_open(self):
         dir = (os.path.dirname(self.accounts_path)
                if self.accounts_path is not None else '.')
@@ -436,20 +335,24 @@ class MainWindow():
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
         if accounts_path:
-            return self.load_accounts(accounts_path)
+            self.accounts_generator = self.load_accounts(accounts_path)
 
     def load_accounts(self, accounts_path):
-        self.accounts = []
+        start = 0
+        end = self.accounts_per_number.get()
         try:
             with open(accounts_path, 'r') as f:
-                for acc_item in f.readlines():
-                    acc_data = acc_item.rstrip().split(':')
-                    self.accounts.append(acc_data)
-            self.accounts_path = accounts_path
+                data = [i.rstrip().split(':') for i in f.readlines()]
         except (EnvironmentError, TypeError):
-            pass
-            # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
-            #                        accounts_path, err), parent=self.parent)
+            showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
+                                   accounts_path, err), parent=self.parent)
+            return
+
+        self.status_bar.set("Файл загружен: %s" % os.path.basename(accounts_path))
+        self.accounts_path = accounts_path
+        while start < len(data):
+            yield data[start:end]
+            start, end = end, end + end
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -468,7 +371,8 @@ class MainWindow():
                 self.manifest_data = json.load(f)
             self.manifest_path = manifest_path
         except (EnvironmentError, TypeError):
-            pass
+            showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
+                                   manifest_path, err), parent=self.parent)
 
     def app_quit(self, *ignore):
         with open('database/userdata.txt', 'w') as f:
@@ -477,6 +381,7 @@ class MainWindow():
         self.parent.destroy()
 
 class RegistrationThread(threading.Thread):
+
     counter = 0
     lock = threading.Lock()
 
@@ -486,15 +391,21 @@ class RegistrationThread(threading.Thread):
         self.window = window
         self.amount = amount
         self.result = result
+        self.error = None
 
     def run(self):
-        while self.__class__.counter < self.amount:
-            self.__class__.counter += 1
-            self.registrate_account()
+        while RegistrationThread.counter < self.amount:
+            RegistrationThread.counter += 1
+            try:
+                self.registrate_account()
+            except Exception as err:
+                self.error = (err.__class__.__name__, err)
+                logger.critical(traceback.format_exc())
+                return
 
     def registrate_account(self):
         login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get())
-        with self.lock:
+        with RegistrationThread.lock:
             self.window.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
             logger.info('account data: %s %s', login, passwd)
             self.save_unattached_account(login, passwd)
@@ -516,11 +427,113 @@ class RegistrationThread(threading.Thread):
 
 class BindingThread(threading.Thread):
 
-    def __init__(self, window):
+    lock = threading.Lock()
+
+    def __init__(self, window, accounts_package, sms_service):
         threading.Thread.__init__(self)
         self.daemon = True
         self.window = window
+        self.accounts_package = accounts_package
+        self.sms_service = sms_service
+        self.error = None
 
+    def run(self):
+        for account_data in self.accounts_package:
+            login, passwd = account_data[:2]
+            insert_log = self.log_wrapper(login)
+            try:
+                raise OnlineSimError
+                with BindingThread.lock:
+                    tzid, number, _ = self.get_new_number(insert_log)
+                insert_log('Привязываю Guard')
+                insert_log('Логинюсь в аккаунт')
+                try:
+                    steam_client = steamreg.mobile_login(login, passwd)
+                except SteamAuthError as err:
+                    insert_log(err)
+                    continue
+
+                if steamreg.has_phone_attached(steam_client):
+                    insert_log('К аккаунту уже привязан номер')
+                    continue
+
+                sms_code, mobguard_data, number = self.add_authenticator(insert_log, steam_client,
+                                                                         number, tzid)
+                insert_log('Делаю запрос на привязку гуарда...')
+                steamreg.steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code)
+                mobguard_data['account_password'] = passwd
+                self.save_attached_account(mobguard_data, login, passwd, number)
+                insert_log('Guard успешно привязан')
+            except Exception as err:
+                self.error = (err.__class__.__name__, err)
+                logger.critical(traceback.format_exc())
+                return
+
+    def add_authenticator(self, insert_log, steam_client, number, tzid):
+        is_repeated = False
+        while True:
+            insert_log('Делаю запрос Steam на добавление номера...')
+            is_number_valid = steamreg.steam_addphone_request(steam_client, number)
+            if not is_number_valid:
+                insert_log('Стим сообщил о том, что номер не подходит')
+                tzid, number, is_repeated = self.get_new_number(insert_log, tzid)
+                continue
+            insert_log('Жду SMS код...')
+            sms_code = self.sms_service.get_sms_code(tzid, is_repeated=is_repeated)
+            is_repeated = True
+            if not sms_code:
+                insert_log('Не доходит SMS. Меняю номер...')
+                tzid, number, is_repeated = self.get_new_number(insert_log, tzid)
+                continue
+            mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
+            success = steamreg.steam_checksms_request(steam_client, sms_code)
+            if not success:
+                inser_log('Неверный SMS код. Пробую снова...')
+                continue
+            return sms_code, mobguard_data, number
+
+    def get_new_number(self, insert_log, tzid=0):
+        if tzid:
+            self.sms_service.set_operation_ok(tzid)
+            self.sms_service.used_codes.clear()
+        is_repeated = False
+        insert_log('Запрашиваю новый номер...')
+        tzid = self.sms_service.request_new_number()
+        number = self.sms_service.get_number(tzid)
+        insert_log('Новый номер: ' + number)
+        return tzid, number, is_repeated
+
+    def save_attached_account(self, mobguard_data, login, passwd, number):
+        steamid = mobguard_data['Session']['SteamID']
+        accounts_dir = 'new_accounts' if self.window.autoreg.get() else 'old_accounts'
+        txt_path = os.path.join(accounts_dir, login + '.txt')
+        mafile_path = os.path.join(accounts_dir, login + '.maFile')
+
+        with open(txt_path, 'w') as f:
+            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
+                     login, passwd, str(datetime.date.today()), number))
+        with open('accounts_attached.txt', 'a+') as f:
+            f.write('%s:%s\n' % (login, passwd))
+
+        if self.window.import_mafile.get():
+            mafile_path = os.path.join(os.path.dirname(self.window.manifest_path), login + '.maFile')
+            data = {
+                "encryption_iv": None,
+                "encryption_salt": None,
+                "filename": login + '.maFile',
+                "steamid": int(steamid)
+            }
+            self.window.manifest_data["entries"].append(data)
+            with open(self.window.manifest_path, 'w') as f:
+                json.dump(self.window.manifest_data, f)
+
+        with open(mafile_path, 'w') as f:
+            json.dump(mobguard_data, f)
+
+    def log_wrapper(self, login):
+        def insert_log(text):
+            self.window.log_box.insert(END, '%s (%s)' % (text, login))
+        return insert_log
 
 if __name__ == '__main__':
     logging.getLogger("requests").setLevel(logging.ERROR)
