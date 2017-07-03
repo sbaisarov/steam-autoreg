@@ -88,6 +88,7 @@ class SteamRegger:
                 if 'that phone number is not usable' in response.get('error_text', ''):
                     is_valid_number = False
                 break
+            time.sleep(3)
 
         return is_valid_number
 
@@ -138,19 +139,20 @@ class SteamRegger:
                 mobguard_data = steam_client.session.post(
                     'https://api.steampowered.com/ITwoFactorService/AddAuthenticator/v0001/',
                     data = {
-                    "access_token": steam_client.oauth['oauth_token'],
-                    "steamid": steam_client.oauth['steamid'],
-                    "authenticator_type": "1",
-                    "device_identifier": device_id,
-                    "sms_phone_id": "1"
+                        "access_token": steam_client.oauth['oauth_token'],
+                        "steamid": steam_client.oauth['steamid'],
+                        "authenticator_type": "1",
+                        "device_identifier": device_id,
+                        "sms_phone_id": "1"
                     }).json()['response']
-                logger.info(str(mobguard_data))
-                if mobguard_data['status'] == 84:
-                    time.sleep(5)
-                    continue
-                break
             except json.decoder.JSONDecodeError:
-                pass
+                time.sleep(3)
+                continue
+            logger.info(str(mobguard_data))
+            if mobguard_data['status'] == 84:
+                time.sleep(5)
+                continue
+            break
 
         mobguard_data['device_id'] = device_id
         mobguard_data['Session'] = {}
@@ -175,11 +177,11 @@ class SteamRegger:
                 fin_resp = steam_client.session.post(
                     'https://api.steampowered.com/ITwoFactorService/FinalizeAddAuthenticator/v0001/',
                     data={
-                    "steamid": steam_client.oauth['steamid'],
-                    "activation_code": sms_code,
-                    "access_token": steam_client.oauth['oauth_token'],
-                    'authenticator_code': one_time_code,
-                    'authenticator_time': int(time.time())
+                        "steamid": steam_client.oauth['steamid'],
+                        "activation_code": sms_code,
+                        "access_token": steam_client.oauth['oauth_token'],
+                        'authenticator_code': one_time_code,
+                        'authenticator_time': int(time.time())
                     }).json()['response']
                 logger.info(str(fin_resp))
                 if (fin_resp.get('want_more') or
@@ -196,13 +198,13 @@ class SteamRegger:
         steam_client = SteamClient(None, self.proxy)
         steam_client.login(mobguard_data['account_name'], mobguard_data['account_password'], mobguard_data)
         data = {
-        'wallet_code': wallet_code,
-        'CreateFromAddress': '1',
-        'Address': 'Russia',
-        'City': 'Russia',
-        'Country': 'RU',
-        'State': '',
-        'PostCode': '0001'
+            'wallet_code': wallet_code,
+            'CreateFromAddress': '1',
+            'Address': 'Russia',
+            'City': 'Russia',
+            'Country': 'RU',
+            'State': '',
+            'PostCode': '0001'
         }
         steam_client.session.post('https://store.steampowered.com/account/validatewalletcode/',
                                      data={'wallet_code': wallet_code})
@@ -269,7 +271,7 @@ class SteamRegger:
         chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
         func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(2, 4))))
         login_name, password, email = [generate_credential() for _ in range(3)]
-        email += '@bubblemail.xyz'
+        email += '@bublemail.xyz'
         while True:
             r = session.post('https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
                               .format(login_name)).json()
@@ -307,6 +309,31 @@ class SteamRegger:
                                .format(rucaptcha_api_key, captcha_id))
 
         return login_name, password
+
+    @staticmethod
+    def activate_steam_account(steam_client):
+        url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
+        data = {
+            'sessionID': steam_client.get_session_id(),
+            'type': 'profileSave',
+            'personaName': steam_client.login_name,
+            'summary': 'No information given.',
+            'primary_group_steamid': '0'
+        }
+        steam_client.session.post(url, data=data)
+
+    @staticmethod
+    def remove_intentory_privacy(steam_client):
+        url = 'http://steamcommunity.com/profiles/{}/edit/settings'.format(steam_client.steamid)
+        data = {
+            'sessionID': steam_client.get_session_id(),
+            'type': 'profileSettings',
+            'privacySetting': '3',
+            'commentSetting': 'commentanyone',
+            'inventoryPrivacySetting': '3',
+            'inventoryGiftPrivacy': '1',
+        }
+        steam_client.session.post(url, data=data)
 
 if __name__ == '__main__':
     foo = SteamRegger()
