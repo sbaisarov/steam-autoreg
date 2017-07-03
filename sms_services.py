@@ -19,12 +19,17 @@ class OnlineSimApi():
         url = 'http://onlinesim.ru/api/getNum.php'
         data = {'service': 'Steam', 'apikey': self.api_key, 'form': '1'}
         resp = self._send_request(url, data)
-        try:
-            tzid = resp['tzid']
-        except KeyError:
-            raise OnlineSimError(resp['response'])
+        while True:
+            try:
+                tzid = resp['tzid']
+                break
+            except KeyError:
+                if 'TRY_AGAIN_LATER' in resp['response']:
+                    print('TRY_AGAIN_LATER in response')
+                    time.sleep(3)
+                    continue
+                raise OnlineSimError(resp['response'])
         return tzid
-
 
     def get_number(self, tzid):
         url = 'http://onlinesim.ru/api/getState.php'
@@ -36,14 +41,12 @@ class OnlineSimApi():
             raise OnlineSimError(resp['response'])
         return number
 
-
     def get_sms_code(self, tzid, is_repeated=False):
         attempts = 0
         url = 'http://onlinesim.ru/api/getState.php'
         data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
         while attempts < 30:
             attempts += 1
-            print(attempts)
             time.sleep(3)
             if is_repeated:
                 self.request_repeated_number_usage(tzid)
@@ -60,7 +63,6 @@ class OnlineSimApi():
 
         return None
 
-
     def set_operation_ok(self, tzid):
         url = 'http://onlinesim.ru/api/setOperationOk.php'
         data = {'tzid': tzid, 'apikey': self.api_key}
@@ -76,7 +78,7 @@ class OnlineSimApi():
     def _send_request(url, data):
         while True:
             try:
-                resp = requests.post(url, data=data, timeout=3)
+                resp = requests.post(url, data=data, timeout=5)
                 resp = resp.json()
                 break
             except json.decoder.JSONDecodeError:
@@ -94,7 +96,6 @@ class SmsActivateApi():
     def __init__(self, api_key):
         self.api_key = api_key
         self.url = 'http://sms-activate.ru/stubs/handler_api.php'
-
 
     def get_number(self):
         resp = requests.get(self.url, params={'api_key': self.api_key,
@@ -120,7 +121,6 @@ class SmsActivateApi():
         number = '+' + number
         return id, number
 
-
     def set_status(self, id, status):
         set_status_params = {
         'api_key': self.api_key,
@@ -130,7 +130,6 @@ class SmsActivateApi():
         set_status_params['status'] = status
         resp = requests.get(self.url, params=set_status_params)
         logger.info('Ответ от sms-activate на запрос установить статус: ' + resp.text)
-
 
     def get_status(self, id, sms_code_prev=None):
         def get_sms():
