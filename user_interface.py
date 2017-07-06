@@ -155,7 +155,8 @@ class MainWindow():
                 self.userdata[field] = value
 
         try:
-            self.check_rucaptcha_key()
+            if self.autoreg():
+                self.check_rucaptcha_key()
             if self.mobile_bind.get():
                 self.registrate_with_binding()
             else:
@@ -204,11 +205,11 @@ class MainWindow():
 
         try:
             numbers_per_account = self.numbers_per_account.get()
-            if not 0 < numbers_per_account <= 7:
+            if not 0 < numbers_per_account <= 15:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                        "связанных с 1 номером (больше нуля но меньше 7-и).", parent=self.parent)
+                        "связанных с 1 номером (больше нуля но меньше 15-и).", parent=self.parent)
             return
 
         sms_service = OnlineSimApi(onlinesim_api_key)
@@ -288,7 +289,7 @@ class MainWindow():
                 yield login, passwd
 
     def registrate_account(self):
-        login, passwd = self.steamreg.create_account(rucaptcha_api_key)
+        login, passwd = self.steamreg.create_account(self.rucaptcha_api_key.get())
         with lock:
             self.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
             logger.info('account data: %s %s', login, passwd)
@@ -446,10 +447,10 @@ class MainWindow():
                     acc_data = acc_item.rstrip().split(':')
                     self.accounts.append(acc_data)
             self.accounts_path = accounts_path
-        except (EnvironmentError, TypeError):
-            pass
+        except (EnvironmentError, TypeError) as err:
             # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
             #                        accounts_path, err), parent=self.parent)
+            pass
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -467,7 +468,9 @@ class MainWindow():
             with open(manifest_path, 'r') as f:
                 self.manifest_data = json.load(f)
             self.manifest_path = manifest_path
-        except (EnvironmentError, TypeError):
+        except (EnvironmentError, TypeError) as err:
+            # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
+            #                        manifest_path, err), parent=self.parent)
             pass
 
     @staticmethod
