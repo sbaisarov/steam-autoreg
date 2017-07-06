@@ -87,11 +87,8 @@ class SteamRegger:
             if not response['fatal']:
                 if 'that phone number is not usable' in response.get('error_text', ''):
                     is_valid_number = False
-                break
+                return is_valid_number
             time.sleep(3)
-
-        return is_valid_number
-
 
     @staticmethod
     def has_phone_attached(steam_client):
