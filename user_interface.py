@@ -17,7 +17,8 @@ from pkgutil import iter_modules
 
 installed_modules = [item[1] for item in iter_modules()]
 if 'requests' not in installed_modules:
-    os.system('pip install requests bs4 rsa')
+    os.system('pip install bs4 rsa')
+    os.system('pip install https://github.com/Shamanovski/requests/archive/master.zip')
 
 import requests
 
@@ -151,8 +152,8 @@ class MainWindow():
                 except AttributeError:
                     pass
                 self.userdata[field] = value
-
-        self.check_rucaptcha_key()
+        if self.autoreg.get():
+            self.check_rucaptcha_key()
         if self.mobile_bind.get():
             self.registrate_with_binding()
         else:
@@ -189,18 +190,19 @@ class MainWindow():
             return
 
         if not self.accounts_path and not self.autoreg.get():
-            showwarning("Ошибка", ("Не указан путь к файлу с данными от аккаунтов. "
-                                   "Если у вас нет своих аккаунтов, то поставьте галочку 'Создавать новые аккаунты'"),
+            showwarning("Ошибка", "Не указан путь к файлу с данными от аккаунтов. "
+                                  "Если у вас нет своих аккаунтов, то поставьте галочку 'Создавать новые аккаунты'",
                         parent=self.parent)
             return
 
         try:
             accounts_per_number = self.accounts_per_number.get()
-            if not 0 < accounts_per_number <= 20:
+            if not 0 < accounts_per_number <= 15:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                        "связанных с 1 номером (больше нуля но меньше 20-и).", parent=self.parent)
+                                  "связанных с 1 номером (больше нуля но меньше 20-и).",
+                        parent=self.parent)
             return
 
         accounts = self.new_accounts_generator() if self.autoreg.get() else self.old_account_generator()
@@ -240,6 +242,10 @@ class MainWindow():
                     break
             for thread in threads:
                 thread.join()
+                if thread.error:
+                    error_origin, error_text = thread.error
+                    showwarning("Ошибка %s" % error_origin, error_text)
+                    return
             RegistrationThread.counter = 0
 
             yield new_accounts
@@ -413,7 +419,8 @@ class RegistrationThread(threading.Thread):
         steam_client = SteamClient()
         while True:
             try:
-                steam_client.login(login, passwd)
+                with RegistrationThread.lock:
+                    steam_client.login(login, passwd)
                 break
             except AttributeError:
                 time.sleep(3)
@@ -558,6 +565,6 @@ if __name__ == '__main__':
     root = Tk()
     window = MainWindow(root)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v0.3')
+    root.title('Steam Auto Authenticator v0.5')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
