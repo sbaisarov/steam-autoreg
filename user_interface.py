@@ -155,7 +155,7 @@ class MainWindow():
                 self.userdata[field] = value
 
         try:
-            if self.autoreg():
+            if self.autoreg.get():
                 self.check_rucaptcha_key()
             if self.mobile_bind.get():
                 self.registrate_with_binding()
