@@ -88,7 +88,7 @@ class MainWindow():
 
         ctr_label = Label(frame, text='Количество аккаунтов на 1 номер:')
         ctr_label.grid(row=3, column=0, pady=5, sticky=W)
-        ctr_entry = Entry(frame, textvariable=self.numbers_per_account, width=1)
+        ctr_entry = Entry(frame, textvariable=self.numbers_per_account, width=2)
         ctr_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
