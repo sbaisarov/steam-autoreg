@@ -491,11 +491,11 @@ class BindingThread(threading.Thread):
             insert_log('Делаю запрос Steam на добавление номера...')
             response = steamreg.steam_addphone_request(steam_client, number)
             if not response['success']:
-                if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
-                    insert_log('Стим сообщил о том, что номер не подходит')
-                    tzid, number, is_repeated = self.get_new_number(tzid)
-                    insert_log('Новый номер: ' + number)
-                    continue
+                # if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
+                #     insert_log('Стим сообщил о том, что номер не подходит')
+                #     tzid, number, is_repeated = self.get_new_number(tzid)
+                #     insert_log('Новый номер: ' + number)
+                #     continue
                 raise SteamAuthError('Steam addphone request failed: %s' % number)
             insert_log('Жду SMS код...')
             sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
