@@ -205,11 +205,11 @@ class MainWindow():
 
         try:
             numbers_per_account = self.numbers_per_account.get()
-            if not 0 < numbers_per_account <= 15:
+            if not 0 < numbers_per_account <= 20:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                        "связанных с 1 номером (больше нуля но меньше 15-и).", parent=self.parent)
+                        "связанных с 1 номером (больше нуля но меньше 20-и).", parent=self.parent)
             return
 
         sms_service = OnlineSimApi(onlinesim_api_key)
@@ -243,6 +243,7 @@ class MainWindow():
                         break
 
                     self.log_box.insert(END, 'Стим сообщил о том, что номер не подходит')
+                    time.sleep(5)
                     tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                     continue
                 self.status_bar.set('Жду SMS код...')
@@ -256,6 +257,7 @@ class MainWindow():
                 success = self.steamreg.steam_checksms_request(steam_client, sms_code)
                 if not success:
                     self.log_box.insert('Неверный SMS код. Пробую снова...')
+                    time.sleep(5)
                     continue
                 break
 
