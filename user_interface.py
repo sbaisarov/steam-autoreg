@@ -406,8 +406,8 @@ class MainWindow():
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
 
         with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
-                     login, passwd, str(datetime.date.today()), number))
+            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}'.format(
+                     login, passwd, str(datetime.date.today()), number, steamid))
         with open('accounts_attached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
@@ -447,7 +447,8 @@ class MainWindow():
         try:
             with open(accounts_path, 'r') as f:
                 for acc_item in f.readlines():
-                    acc_data = acc_item.rstrip().split(':')
+                    split_char = ':' if ':' in acc_item else ','
+                    acc_data = acc_item.rstrip().split(split_char)
                     self.accounts.append(acc_data)
             self.accounts_path = accounts_path
         except (EnvironmentError, TypeError) as err:
