@@ -496,7 +496,7 @@ class BindingThread(threading.Thread):
                     tzid, number, is_repeated = self.get_new_number(tzid)
                     insert_log('Новый номер: ' + number)
                     continue
-                raise SteamAuthError('Steam addphone request failed: %s' % phone_num)
+                raise SteamAuthError('Steam addphone request failed: %s' % number)
             insert_log('Жду SMS код...')
             sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
             if not sms_code:
@@ -506,15 +506,14 @@ class BindingThread(threading.Thread):
                 continue
             mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
             response = steamreg.steam_checksms_request(steam_client, sms_code)
-            if not response['success']:
-                if 'The SMS code is incorrect' in response['error_text']:
-                    insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
-                    time.sleep(5)
-                else:
-                    insert_log('Steam не удается обработать SMS %s. Меняю номер...' % sms_code)
-                    tzid, number, is_repeated = self.get_new_number(tzid)
-                    insert_log('Новый номер: ' + number)
+            if 'The SMS code is incorrect' in response.get('error_text', ''):
+                insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
+                time.sleep(5)
                 continue
+                # else:
+                #     insert_log('Steam не удается обработать SMS %s. Меняю номер...' % sms_code)
+                #     tzid, number, is_repeated = self.get_new_number(tzid)
+                #     insert_log('Новый номер: ' + number)
             return sms_code, mobguard_data, number, tzid
 
     def get_new_number(self, tzid=0):
