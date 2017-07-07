@@ -270,8 +270,9 @@ class MainWindow():
 
             mobguard_data['account_password'] = passwd
             self.save_attached_account(mobguard_data, login, passwd, number)
-            self.activate_steam_account(steam_client)
-            self.remove_intentory_privacy(steam_client)
+            if not self.autoreg.get():
+                self.activate_steam_account(steam_client)
+                self.remove_intentory_privacy(steam_client)
             self.log_box.insert(END, 'Guard успешно привязан: ' + login)
 
     def accounts_generator(self):
