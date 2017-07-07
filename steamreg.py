@@ -80,15 +80,10 @@ class SteamRegger:
             'sessionid': sessionid
         }
         is_valid_number = True
-        while True:
-            response = steam_client.session.post(
-                'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
-            logger.info(str(response))
-            if not response['fatal']:
-                if 'that phone number is not usable' in response.get('error_text', ''):
-                    is_valid_number = False
-                return is_valid_number
-            time.sleep(3)
+        response = steam_client.session.post(
+            'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+        logger.info(str(response))
+        return response
 
     @staticmethod
     def has_phone_attached(steam_client):
@@ -113,20 +108,10 @@ class SteamRegger:
             'arg': sms_code,
             'sessionid': sessionid
         }
-        attempts = 0
-        while attempts < 10:
-            response = steam_client.session.post(
-                'https://steamcommunity.com/steamguard/phoneajax', data=data)
-            logger.info(response.text)
-            if not response.json()['fatal']:
-                break
-            time.sleep(3)
-            attempts += 1
-
-        if response.json()['fatal']:
-            raise SteamAuthError('Steam Service is not available at the moment')
-
-        return response.json()['success']
+        response = steam_client.session.post(
+            'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+        logger.info(str(response))
+        return response
 
     @staticmethod
     def steam_add_authenticator_request(steam_client):
