@@ -41,12 +41,11 @@ class OnlineSimApi():
         attempts = 0
         url = 'http://onlinesim.ru/api/getState.php'
         data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
-        while attempts < 30:
+        if is_repeated:
+            self.request_repeated_number_usage(tzid)
+        while attempts < 20:
             attempts += 1
-            print(attempts)
             time.sleep(3)
-            if is_repeated:
-                self.request_repeated_number_usage(tzid)
             resp = self._send_request(url, data)
             sms_code = resp[0].get('msg', None)
             if is_repeated:
