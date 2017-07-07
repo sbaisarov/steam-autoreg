@@ -197,11 +197,11 @@ class MainWindow():
 
         try:
             accounts_per_number = self.accounts_per_number.get()
-            if not 0 < accounts_per_number <= 15:
+            if not 0 < accounts_per_number <= 30:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                                  "связанных с 1 номером (больше нуля но меньше 20-и).",
+                                  "связанных с 1 номером (больше нуля но меньше 30-и).",
                         parent=self.parent)
             return
 
@@ -213,7 +213,7 @@ class MainWindow():
         for account_package in accounts:
             items.put(account_package)
 
-        for _ in range(3):
+        for _ in range(1):
             t = BindingThread(self, items, sms_service) # transfer main window object
             t.start()
             threads.append(t)
@@ -346,8 +346,8 @@ class MainWindow():
             with open(accounts_path, 'r') as f:
                 self.old_accounts = [i.rstrip().split(':') for i in f.readlines()]
         except (EnvironmentError, TypeError):
-            showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
-                                   accounts_path, err), parent=self.parent)
+            # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
+            #                        accounts_path, err), parent=self.parent)
             return
 
         self.status_bar.set("Файл загружен: %s" % os.path.basename(accounts_path))
@@ -355,10 +355,10 @@ class MainWindow():
 
     def old_account_generator(self):
         start = 0
-        end = self.accounts_per_number.get()
+        end = span = self.accounts_per_number.get()
         while start < len(self.old_accounts):
             yield self.old_accounts[start:end]
-            start, end = end, end + end
+            start, end = end, end + span
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -377,8 +377,9 @@ class MainWindow():
                 self.manifest_data = json.load(f)
             self.manifest_path = manifest_path
         except (EnvironmentError, TypeError):
-            showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
-                                   manifest_path, err), parent=self.parent)
+            # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
+            #                        manifest_path, err), parent=self.parent)
+            pass
 
     def app_quit(self, *ignore):
         with open('database/userdata.txt', 'w') as f:
@@ -488,23 +489,31 @@ class BindingThread(threading.Thread):
     def add_authenticator(self, insert_log, steam_client, number, tzid, is_repeated):
         while True:
             insert_log('Делаю запрос Steam на добавление номера...')
-            is_number_valid = steamreg.steam_addphone_request(steam_client, number)
-            if not is_number_valid:
-                insert_log('Стим сообщил о том, что номер не подходит')
-                tzid, number, is_repeated = self.get_new_number(tzid)
-                insert_log('Новый номер: ' + number)
-                continue
+            response = steamreg.steam_addphone_request(steam_client, number)
+            if not response['success']:
+                if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
+                    insert_log('Стим сообщил о том, что номер не подходит')
+                    tzid, number, is_repeated = self.get_new_number(tzid)
+                    insert_log('Новый номер: ' + number)
+                    continue
+                raise SteamAuthError('Steam addphone request failed: %s' % phone_num)
             insert_log('Жду SMS код...')
             sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
             if not sms_code:
-                insert_log('Не доходит SMS. Меняю номер...')
-                tzid, number, is_repeated = self.get_new_number(tzid)
-                insert_log('Новый номер: ' + number)
+                insert_log('Не доходит SMS. Пробую снова...')
+                # tzid, number, is_repeated = self.get_new_number(tzid)
+                # insert_log('Новый номер: ' + number)
                 continue
             mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
-            success = steamreg.steam_checksms_request(steam_client, sms_code)
-            if not success:
-                insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
+            response = steamreg.steam_checksms_request(steam_client, sms_code)
+            if not response['success']:
+                if 'The SMS code is incorrect' in response['error_text']:
+                    insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
+                    time.sleep(5)
+                else:
+                    insert_log('Steam не удается обработать SMS %s. Меняю номер...' % sms_code)
+                    tzid, number, is_repeated = self.get_new_number(tzid)
+                    insert_log('Новый номер: ' + number)
                 continue
             return sms_code, mobguard_data, number, tzid
 
