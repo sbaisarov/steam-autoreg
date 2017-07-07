@@ -59,7 +59,7 @@ class MainWindow():
         self.onlinesim_api_key = StringVar()
         self.rucaptcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
-        self.numbers_per_account = IntVar()
+        self.accounts_per_number = IntVar()
 
         self.status_bar = StringVar()
 
@@ -88,7 +88,7 @@ class MainWindow():
 
         ctr_label = Label(frame, text='Количество аккаунтов на 1 номер:')
         ctr_label.grid(row=3, column=0, pady=5, sticky=W)
-        ctr_entry = Entry(frame, textvariable=self.numbers_per_account, width=2)
+        ctr_entry = Entry(frame, textvariable=self.accounts_per_number, width=2)
         ctr_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
@@ -204,8 +204,8 @@ class MainWindow():
             return
 
         try:
-            numbers_per_account = self.numbers_per_account.get()
-            if not 0 < numbers_per_account <= 20:
+            accounts_per_number = self.accounts_per_number.get()
+            if not 0 < accounts_per_number <= 20:
                 raise ValueError
         except (TypeError, ValueError):
             showwarning("Ошибка", "Введите корректное число аккаунтов, "
@@ -222,7 +222,7 @@ class MainWindow():
             login, passwd = data[:2]
             logger.info('account data: %s %s', login, passwd)
 
-            if ctr == numbers_per_account or is_first_iteration:
+            if ctr == accounts_per_number or is_first_iteration:
                 tzid, number, is_repeated, ctr = self.get_new_number(sms_service, tzid)
                 is_first_iteration = False
 
@@ -279,7 +279,7 @@ class MainWindow():
         new_accounts_amount = self.new_accounts_amount.get()
         while ctr < new_accounts_amount:
             new_accounts = []
-            for _ in range(self.numbers_per_account.get()):
+            for _ in range(self.accounts_per_number.get()):
                 self.status_bar.set('Создаю аккаунт, решаю капчу...')
                 login, passwd = self.steamreg.create_account(self.rucaptcha_api_key.get())
                 new_accounts.append((login, passwd))
