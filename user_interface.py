@@ -140,7 +140,7 @@ class MainWindow():
                         parent=self.parent)
             return
 
-        if not self.rucaptcha_api_key.get() and self.autoreg.get():
+        if not self.rucaptcha_api_key and self.autoreg.get():
             showwarning("Ошибка", "Не указан api ключ RuCaptcha")
             return
 
@@ -180,7 +180,7 @@ class MainWindow():
             return
 
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
-        rucaptcha_api_key = self.rucaptcha_api_key.get()
+        rucaptcha_api_key = self.rucaptcha_api_key
         threads = []
         for _ in range(20):
             t = threading.Thread(target=self.registrate_account)
@@ -282,7 +282,7 @@ class MainWindow():
             new_accounts = []
             for _ in range(self.accounts_per_number.get()):
                 self.status_bar.set('Создаю аккаунт, решаю капчу...')
-                login, passwd = self.steamreg.create_account(self.rucaptcha_api_key.get())
+                login, passwd = self.steamreg.create_account(self.rucaptcha_api_key)
                 new_accounts.append((login, passwd))
                 self.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
                 ctr += 1
@@ -292,7 +292,7 @@ class MainWindow():
                 yield login, passwd
 
     def registrate_account(self):
-        login, passwd = self.steamreg.create_account(self.rucaptcha_api_key.get())
+        login, passwd = self.steamreg.create_account(self.rucaptcha_api_key)
         with lock:
             self.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
             logger.info('account data: %s %s', login, passwd)
@@ -385,6 +385,7 @@ class MainWindow():
             raise RuCaptchaError('На счету нулевой баланс')
         elif 'ERROR_WRONG_USER_KEY' in resp.text:
             raise RuCaptchaError('Неправильно введен API ключ')
+        self.rucaptcha_api_key = self.rucaptcha_api_key.get().strip()
 
     @staticmethod
     def get_node():
