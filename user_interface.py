@@ -50,8 +50,8 @@ class MainWindow():
             self.deploy_activation_widgets(frame)
             return
 
-        self.manifest_path = None
-        self.accounts_path = None
+        self.manifest_path = ''
+        self.accounts_path = ''
         self.manifest_data = None
         self.old_accounts = None
         self.autoreg = IntVar()
@@ -459,12 +459,12 @@ class BindingThread(threading.Thread):
                 insert_log('Номер: ' + number)
                 try:
                     insert_log('Логинюсь в аккаунт')
-                    try:
-                        with BindingThread.lock:
+                    with BindingThread.lock:
+                        try:
                             steam_client = steamreg.mobile_login(login, passwd)
-                    except SteamAuthError as err:
-                        insert_log(err)
-                        continue
+                        except SteamAuthError as err:
+                            insert_log(err)
+                            continue
 
                     if steamreg.has_phone_attached(steam_client):
                         insert_log('К аккаунту уже привязан номер')
@@ -491,29 +491,23 @@ class BindingThread(threading.Thread):
             insert_log('Делаю запрос Steam на добавление номера...')
             response = steamreg.steam_addphone_request(steam_client, number)
             if not response['success']:
-                # if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
-                #     insert_log('Стим сообщил о том, что номер не подходит')
-                #     tzid, number, is_repeated = self.get_new_number(tzid)
-                #     insert_log('Новый номер: ' + number)
-                #     continue
+                if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
+                    insert_log('Стим сообщил о том, ему не удалось отправить SMS')
+                    tzid, number, is_repeated = self.get_new_number(tzid)
+                    insert_log('Новый номер: ' + number)
+                    time.sleep(5)
+                    continue
                 raise SteamAuthError('Steam addphone request failed: %s' % number)
             insert_log('Жду SMS код...')
             sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
             if not sms_code:
                 insert_log('Не доходит SMS. Пробую снова...')
-                # tzid, number, is_repeated = self.get_new_number(tzid)
-                # insert_log('Новый номер: ' + number)
                 continue
             mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
             response = steamreg.steam_checksms_request(steam_client, sms_code)
             if 'The SMS code is incorrect' in response.get('error_text', ''):
                 insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
-                time.sleep(5)
                 continue
-                # else:
-                #     insert_log('Steam не удается обработать SMS %s. Меняю номер...' % sms_code)
-                #     tzid, number, is_repeated = self.get_new_number(tzid)
-                #     insert_log('Новый номер: ' + number)
             return sms_code, mobguard_data, number, tzid
 
     def get_new_number(self, tzid=0):
