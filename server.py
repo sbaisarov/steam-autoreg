@@ -41,7 +41,10 @@ def handle_request():
     return json.dumps({'success': success}), 200
 
 def get_city_from_ip(ip_address):
-    resp = requests.get('http://ip-api.com/json/%s' % ip_address).json()
+    try:
+        resp = requests.get('http://ip-api.com/json/%s' % ip_address).json()
+    except requests.exceptions.ProxyError:
+        return 'Unknown'
     return resp['city']
 
 def update_database(data, key, ip):
