@@ -19,15 +19,14 @@ logger.addHandler(file_handler)
 app = Flask(__name__)
 db = shelve.open('clients', writeback=True)
 
-@app.route('/', methods=['POST'])
+@app.route('/', methods=['GET', 'POST'])
 def handle_request():
     with open('keys.txt', 'r') as f:
         keys = [i.rstrip() for i in f.readlines()]
 
     success = False
     data = {key: value for key, value in request.form.items()}
-    ip = request.remote_addr
-    ip = '188.0.188.236'
+    ip = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
     key = data['key']
     if key in keys:
         if not db.get(key, None):
@@ -42,10 +41,14 @@ def handle_request():
     return json.dumps({'success': success}), 200
 
 def get_city_from_ip(ip_address):
-    resp = requests.get('http://ip-api.com/json/%s' % ip_address).json()
+    try:
+        resp = requests.get('http://ip-api.com/json/%s' % ip_address).json()
+    except requests.exceptions.ProxyError:
+        return 'Unknown'
     return resp['city']
 
 def update_database(data, key, ip):
+    logger.info('IP : %s', ip)
     data['ip'] = (ip, get_city_from_ip(ip))
     db[key] = {}
     db[key].update(data)
@@ -61,10 +64,8 @@ def check_device(data, key, ip):
         city = get_city_from_ip(ip)
         if city != stored_city:
             logger.warning('The ip and the city are different (%s, %s). '
-                            'Data from database: %s', ip, city, db_data)
+                'Data from database: %s', ip, city, db_data)
         logger.warning('IPs are different: %s-%s', ip, stored_ip)
 
     logger.info('The device has been authorized successfully: %s', db_data)
     return True
-
-app.run(port=3000)
