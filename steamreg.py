@@ -308,6 +308,31 @@ class SteamRegger:
 
         return login_name, password
 
+    @staticmethod
+    def activate_steam_account(steam_client):
+        url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
+        data = {
+            'sessionID': steam_client.get_session_id(),
+            'type': 'profileSave',
+            'personaName': steam_client.login_name,
+            'summary': 'No information given.',
+            'primary_group_steamid': '0'
+        }
+        steam_client.session.post(url, data=data)
+
+    @staticmethod
+    def remove_intentory_privacy(steam_client):
+        url = 'http://steamcommunity.com/profiles/{}/edit/settings'.format(steam_client.steamid)
+        data = {
+            'sessionID': steam_client.get_session_id(),
+            'type': 'profileSettings',
+            'privacySetting': '3',
+            'commentSetting': 'commentanyone',
+            'inventoryPrivacySetting': '3',
+            'inventoryGiftPrivacy': '1',
+        }
+        steam_client.session.post(url, data=data)
+
 if __name__ == '__main__':
     foo = SteamRegger()
     login, passwd, session = foo.create_account()
