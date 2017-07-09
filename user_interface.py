@@ -160,7 +160,8 @@ class MainWindow():
             if self.mobile_bind.get():
                 self.registrate_with_binding()
             else:
-                self.registrate_without_binding()
+                if self.autoreg.get():
+                    self.registrate_without_binding()
         except OnlineSimError as err:
             showwarning("Ошибка onlinesim.ru", err)
         except RuCaptchaError as err:
