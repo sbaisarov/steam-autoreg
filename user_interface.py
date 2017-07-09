@@ -139,7 +139,7 @@ class MainWindow():
                         parent=self.parent)
             return
 
-        if not self.rucaptcha_api_key.get() and self.autoreg.get():
+        if not self.rucaptcha_api_key and self.autoreg.get():
             showwarning("Ошибка", "Не указан api ключ RuCaptcha")
             return
 
@@ -157,7 +157,8 @@ class MainWindow():
         if self.mobile_bind.get():
             self.registrate_with_binding()
         else:
-            self.registrate_without_binding()
+            if self.autoreg.get():
+                self.registrate_without_binding()
         self.status_bar.set('Готов...')
 
     def registrate_without_binding(self):
@@ -167,7 +168,7 @@ class MainWindow():
             return
 
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
-        rucaptcha_api_key = self.rucaptcha_api_key.get()
+        rucaptcha_api_key = self.rucaptcha_api_key
         threads = []
         for _ in range(20):
             t = RegistrationThread(self, new_accounts_amount) # transfer main window object
@@ -206,23 +207,15 @@ class MainWindow():
             return
 
         accounts = self.new_accounts_generator() if self.autoreg.get() else self.old_account_generator()
-        threads = []
-        items = queue.Queue()
         sms_service = OnlineSimApi(onlinesim_api_key)
+        binder = Binder(self, sms_service)
         self.status_bar.set('Делаю привязку Mobile Guard...')
-        for account_package in accounts:
-            items.put(account_package)
-
-        for _ in range(1):
-            t = BindingThread(self, items, sms_service) # transfer main window object
-            t.start()
-            threads.append(t)
-
-        for thread in threads:
-            thread.join()
-            if thread.error:
-                error_origin, error_text = thread.error
-                showwarning("Ошибка %s" % error_origin, error_text)
+        for accounts_package in accounts:
+            try:
+                binder.bind_accounts(accounts_package)
+            except Exception as err:
+                showwarning("Ошибка %s" % err.__class__.__name__, err)
+                logger.critical(err)
                 return
 
     def new_accounts_generator(self):
@@ -247,7 +240,6 @@ class MainWindow():
                     showwarning("Ошибка %s" % error_origin, error_text)
                     return
             RegistrationThread.counter = 0
-
             yield new_accounts
 
     def authorize_user(self):
@@ -316,6 +308,7 @@ class MainWindow():
             raise RuCaptchaError('На счету нулевой баланс')
         elif 'ERROR_WRONG_USER_KEY' in resp.text:
             raise RuCaptchaError('Неправильно введен API ключ')
+        self.rucaptcha_api_key = self.rucaptcha_api_key.get().strip()
 
     @staticmethod
     def get_node():
@@ -411,12 +404,13 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
-        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get())
+        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key)
         logger.info('Аккаунт: %s:%s', login, passwd)
         with RegistrationThread.lock:
             self.window.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
             logger.info('account data: %s %s', login, passwd)
-            self.save_unattached_account(login, passwd)
+            if not self.window.mobile_bind.get():
+                self.save_unattached_account(login, passwd)
         steam_client = SteamClient()
         while True:
             try:
@@ -434,57 +428,45 @@ class RegistrationThread(threading.Thread):
         with open('accounts_unattached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
-class BindingThread(threading.Thread):
+class Binder:
 
-    lock = threading.Lock()
-
-    def __init__(self, window, items, sms_service):
-        threading.Thread.__init__(self)
-        self.daemon = True
+    def __init__(self, window, sms_service):
         self.window = window
-        self.items = items
         self.sms_service = sms_service
         self.error = None
 
-    def run(self):
-        while not self.items.empty():
-            accounts_package = self.items.get()
-            is_repeated = False
-            with BindingThread.lock:
-                tzid, number, is_repeated = self.get_new_number()
-            for account_data in accounts_package:
-                login, passwd = account_data[:2]
-                logger.info('Аккаунт: %s:%s', login, passwd)
-                insert_log = self.log_wrapper(login)
-                insert_log('Номер: ' + number)
-                try:
-                    insert_log('Логинюсь в аккаунт')
-                    with BindingThread.lock:
-                        try:
-                            steam_client = steamreg.mobile_login(login, passwd)
-                        except SteamAuthError as err:
-                            insert_log(err)
-                            continue
+    def bind_accounts(self, accounts_package):
+        is_repeated = False
+        tzid, number, is_repeated = self.get_new_number()
+        for account_data in accounts_package:
+            login, passwd = account_data[:2]
+            logger.info('Аккаунт: %s:%s', login, passwd)
+            insert_log = self.log_wrapper(login)
+            insert_log('Номер: ' + number)
+            insert_log('Логинюсь в аккаунт')
+            try:
+                steam_client = steamreg.mobile_login(login, passwd)
+            except SteamAuthError as err:
+                insert_log(err)
+                continue
 
-                    if steamreg.has_phone_attached(steam_client):
-                        insert_log('К аккаунту уже привязан номер')
-                        continue
+            if steamreg.has_phone_attached(steam_client):
+                insert_log('К аккаунту уже привязан номер')
+                continue
 
-                    sms_code, mobguard_data, number, tzid = self.add_authenticator(insert_log, steam_client,
-                                                                                   number, tzid, is_repeated)
-                    is_repeated = True
-                    insert_log('Делаю запрос на привязку гуарда...')
-                    steamreg.steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code)
-                    mobguard_data['account_password'] = passwd
-                    self.save_attached_account(mobguard_data, login, passwd, number)
-                    insert_log('Guard успешно привязан')
-                except Exception as err:
-                    self.error = (err.__class__.__name__, err)
-                    logger.critical(traceback.format_exc())
-                    return
+            sms_code, mobguard_data, number, tzid = self.add_authenticator(insert_log, steam_client,
+                                                                           number, tzid, is_repeated)
+            is_repeated = True
+            insert_log('Делаю запрос на привязку гуарда...')
+            steamreg.steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code)
+            mobguard_data['account_password'] = passwd
+            self.save_attached_account(mobguard_data, login, passwd, number)
+            if not self.window.autoreg.get():
+                steamreg.activate_steam_account(steam_client)
+                steamreg.remove_intentory_privacy(steam_client)
+            insert_log('Guard успешно привязан')
 
-            self.sms_service.set_operation_ok(tzid)
-            self.items.task_done()
+        self.sms_service.set_operation_ok(tzid)
 
     def add_authenticator(self, insert_log, steam_client, number, tzid, is_repeated):
         while True:
@@ -526,8 +508,8 @@ class BindingThread(threading.Thread):
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
 
         with open(txt_path, 'w') as f:
-            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}'.format(
-                     login, passwd, str(datetime.date.today()), number))
+            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}'.format(
+                     login, passwd, str(datetime.date.today()), number, steamid))
         with open('accounts_attached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
