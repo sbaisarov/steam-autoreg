@@ -162,7 +162,7 @@ class MainWindow():
                     self.registrate_without_binding()
         except Exception as err:
             showwarning("Ошибка %s" % err.__class__.__name__, err)
-            logger.critical(err)
+            logger.critical(traceback.format_exc())
 
         self.status_bar.set('Готов...')
 
@@ -437,7 +437,7 @@ class Binder:
     def bind_accounts(self, accounts_package):
         is_repeated = False
         tzid, number, is_repeated = self.get_new_number()
-        self.window.status_bar('Делаю привязку Mobile Guard...')
+        self.window.status_bar.set('Делаю привязку Mobile Guard...')
         for account_data in accounts_package:
             login, passwd = account_data[:2]
             logger.info('Аккаунт: %s:%s', login, passwd)
@@ -462,7 +462,6 @@ class Binder:
             mobguard_data['account_password'] = passwd
             self.save_attached_account(mobguard_data, login, passwd, number)
             if not self.window.autoreg.get():
-                # might not work
                 steamreg.activate_steam_account(steam_client)
                 steamreg.remove_intentory_privacy(steam_client)
             insert_log('Guard успешно привязан')
