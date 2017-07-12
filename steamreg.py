@@ -252,8 +252,8 @@ class SteamRegger:
         # generate and check validity of the login name
         chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
         func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(2, 4))))
-        login_name, password, email = [generate_credential() for _ in range(3)]
-        email += '@bublemail.xyz'
+        login_name, password, email, email_domain = [generate_credential() for _ in range(4)]
+        email += '@%s.xyz' % email_domain
         while True:
             r = session.post('https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
                               .format(login_name)).json()
