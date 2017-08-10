@@ -7,9 +7,9 @@ import logging
 class OnlineSimError(Exception): pass
 class SmsActivateError(Exception): pass
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
-class OnlineSimApi():
+class OnlineSimApi:
 
     def __init__(self, api_key):
         self.api_key = api_key
@@ -45,29 +45,28 @@ class OnlineSimApi():
         attempts = 0
         url = 'http://onlinesim.ru/api/getState.php'
         data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
-        if is_repeated:
-            self.request_repeated_number_usage(tzid)
-        while attempts < 20:
+        while attempts < 30:
             attempts += 1
             time.sleep(3)
-            resp = self._send_request(url, data)
-            sms_code = resp[0].get('msg', None)
             if is_repeated:
+                self.request_repeated_number_usage(tzid)
+            resp = self._send_request(url, data)
+            try:
+                sms_code = resp[0].get('msg', None)
+            except KeyError:
+                logger.info("The time of the number usage has been expired")
+                raise OnlineSimError
+            if sms_code:
                 if sms_code not in self.used_codes:
                     self.used_codes.add(sms_code)
                     return sms_code
-            else:
-                if sms_code:
-                    self.used_codes.add(sms_code)
-                    return sms_code
-
+        logger.info("Couldn't receive the SMS code.")
         return None
 
     def set_operation_ok(self, tzid):
         url = 'http://onlinesim.ru/api/setOperationOk.php'
         data = {'tzid': tzid, 'apikey': self.api_key}
         self._send_request(url, data)
-
 
     def request_repeated_number_usage(self, tzid):
         url = 'http://onlinesim.ru/api/setOperationRevise.php'
@@ -91,7 +90,7 @@ class OnlineSimApi():
         return resp
 
 
-class SmsActivateApi():
+class SmsActivateApi:
 
     def __init__(self, api_key):
         self.api_key = api_key
