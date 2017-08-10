@@ -17,8 +17,10 @@ from pkgutil import iter_modules
 
 installed_modules = [item[1] for item in iter_modules()]
 if 'requests' not in installed_modules:
+    print("Installing packages. Please wait...")
     os.system('pip install bs4 rsa')
     os.system('pip install https://github.com/Shamanovski/requests/archive/master.zip')
+    print("The Installation is complete")
 
 import requests
 
@@ -35,9 +37,22 @@ if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
 
+logging.getLogger("requests").setLevel(logging.ERROR)
+logger = logging.getLogger()
+formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
+def uncaught_exceptions_handler(type, value, tb):
+    logger.critical("Uncaught exception: {0} {1}\n{2}".format(type, value, traceback.format_tb(tb)))
+sys.excepthook = uncaught_exceptions_handler
+
 steamreg = SteamRegger()
 
-class MainWindow():
+
+class MainWindow:
 
     def __init__(self, parent):
         self.parent = parent
@@ -61,6 +76,7 @@ class MainWindow():
         self.rucaptcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
+        self.email_domain = StringVar()
 
         self.status_bar = StringVar()
 
@@ -92,15 +108,20 @@ class MainWindow():
         ctr_entry = Entry(frame, textvariable=self.accounts_per_number, width=2)
         ctr_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
+        ctr_label = Label(frame, text='Домен для email (по усмотрению, без @):')
+        ctr_label.grid(row=4, column=0, pady=5, sticky=W)
+        ctr_entry = Entry(frame, textvariable=self.email_domain)
+        ctr_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
+
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
                                           variable=self.autoreg)
-        autoreg_checkbutton.grid(row=4, column=0, sticky=W)
+        autoreg_checkbutton.grid(row=5, column=0, sticky=W)
         mafile_checkbutton = Checkbutton(frame, text='Импортировать maFile в SDA',
                                          variable=self.import_mafile)
-        mafile_checkbutton.grid(row=4, column=1, pady=3)
+        mafile_checkbutton.grid(row=5, column=1, pady=3)
         mobile_bind_checkbutton = Checkbutton(frame, text='Привязывать Mobile Guard',
                                               variable=self.mobile_bind)
-        mobile_bind_checkbutton.grid(row=5, column=0, pady=3, sticky=W)
+        mobile_bind_checkbutton.grid(row=6, column=0, pady=3, sticky=W)
         start_button = Button(frame, text='Начать', command=self.start_process,
                               bg='#CEC8C8', relief=GROOVE, width=50)
         start_button.grid(pady=10, columnspan=2)
@@ -160,9 +181,10 @@ class MainWindow():
             else:
                 if self.autoreg.get():
                     self.registrate_without_binding()
-        except Exception as err:
-            showwarning("Ошибка %s" % err.__class__.__name__, err)
-            logger.critical(traceback.format_exc())
+        except Exception:
+            error = traceback.format_exc()
+            showwarning("Внутренняя ошибка программы", error)
+            logger.critical(error)
 
         self.status_bar.set('Готов...')
 
@@ -403,7 +425,8 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
-        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip())
+        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(),
+                                                self.window.email_domain.get())
         logger.info('Аккаунт: %s:%s', login, passwd)
         with RegistrationThread.lock:
             self.window.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
@@ -475,15 +498,23 @@ class Binder:
             if not response['success']:
                 if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
                     insert_log('Стим сообщил о том, ему не удалось отправить SMS')
+                    insert_log('Меняю номер...')
                     tzid, number, is_repeated = self.get_new_number(tzid)
                     insert_log('Новый номер: ' + number)
                     time.sleep(5)
                     continue
                 raise SteamAuthError('Steam addphone request failed: %s' % number)
             insert_log('Жду SMS код...')
-            sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
-            if not sms_code:
-                insert_log('Не доходит SMS. Пробую снова...')
+            try:
+                sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
+                if not sms_code:
+                    insert_log('Не доходит SMS. Пробую снова...')
+                    continue
+            except OnlineSimError:
+                insert_log('Истекло время аренды номера: ' + number)
+                insert_log('Меняю номер...')
+                tzid, number, is_repeated = self.get_new_number(tzid)
+                insert_log('Новый номер: ' + number)
                 continue
             mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
             response = steamreg.steam_checksms_request(steam_client, sms_code)
@@ -507,9 +538,9 @@ class Binder:
         txt_path = os.path.join(accounts_dir, login + '.txt')
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
 
-        with open(txt_path, 'w') as f:
+        with open(txt_path, 'w', encoding='utf-8') as f:
             f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}'.format(
-                     login, passwd, str(datetime.date.today()), number, steamid))
+                    login, passwd, str(datetime.date.today()), number, steamid))
         with open('accounts_attached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
@@ -526,29 +557,16 @@ class Binder:
                 json.dump(self.window.manifest_data, f)
 
         with open(mafile_path, 'w') as f:
-            json.dump(mobguard_data, f)
+            json.dump(mobguard_data, f, separators=(',', ':'))
 
     def log_wrapper(self, login):
         def insert_log(text):
             self.window.log_box.insert(END, '%s (%s)' % (text, login))
         return insert_log
 
-if __name__ == '__main__':
-    logging.getLogger("requests").setLevel(logging.ERROR)
-    logger = logging.getLogger()
-    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-    handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-    def uncaught_exceptions_handler(type, value, tb):
-        logger.critical("Uncaught exception: {0} {1} {2}".format(type, value, traceback.format_tb(tb)))
-    sys.excepthook = uncaught_exceptions_handler
-
-    root = Tk()
-    window = MainWindow(root)
-    root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v0.5')
-    root.protocol("WM_DELETE_WINDOW", window.app_quit)
-    root.mainloop()
+root = Tk()
+window = MainWindow(root)
+root.iconbitmap('database/app.ico')
+root.title('Steam Auto Authenticator v0.5')
+root.protocol("WM_DELETE_WINDOW", window.app_quit)
+root.mainloop()
