@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from steampy.client import SteamClient
 from steampy import guard
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 class SteamAuthError(Exception): pass
 class SteamCaptchaError(Exception): pass
@@ -94,8 +94,15 @@ class SteamRegger:
             'arg': None,
             'sessionid': sessionid
         }
-        response = steam_client.session.post(
-            'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+        while True:
+            try:
+                response = steam_client.session.post(
+                    'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+                break
+            except json.decoder.JSONDecodeError as err:
+                logger.error(err)
+                time.sleep(3)
+
         return response['has_phone']
 
 
@@ -177,7 +184,7 @@ class SteamRegger:
         return fin_resp['success']
 
     def make_account_unlimited(self, mobguard_data, wallet_code, get_api_key=False):
-        steam_client = SteamClient(None, self.proxy)
+        steam_client = SteamClient()
         steam_client.login(mobguard_data['account_name'], mobguard_data['account_password'], mobguard_data)
         data = {
             'wallet_code': wallet_code,
@@ -189,9 +196,9 @@ class SteamRegger:
             'PostCode': '0001'
         }
         steam_client.session.post('https://store.steampowered.com/account/validatewalletcode/',
-                                     data={'wallet_code': wallet_code})
+                                  data={'wallet_code': wallet_code})
         steam_client.session.post('https://store.steampowered.com/account/createwalletandcheckfunds/',
-                                     data=data)
+                                  data=data)
         steam_client.session.post('https://store.steampowered.com/account/confirmredeemwalletcode/',
                                   data={'wallet_code': wallet_code})
 
@@ -210,9 +217,10 @@ class SteamRegger:
             return key
 
 
-    def create_account(self, rucaptcha_api_key):
-        def generate_credential():
+    def create_account(self, rucaptcha_api_key, email_domain=None):
+        def generate_credential(start, end):
             random.shuffle(chr_sets)
+            func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
             credential = ''.join(map(func, chr_sets))
             return credential
 
@@ -249,11 +257,13 @@ class SteamRegger:
         session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
-        # generate and check validity of the login name
+
         chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
-        func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(2, 4))))
-        login_name, password, email, email_domain = [generate_credential() for _ in range(4)]
-        email += '@%s.xyz' % email_domain
+        login_name, password = [generate_credential(2, 4) for _ in range(2)]
+        email = generate_credential(7, 10)
+        if not email_domain:
+            email_domain = generate_credential(2, 4) + '.xyz'
+        email += '@%s' % email_domain
         while True:
             r = session.post('https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
                               .format(login_name)).json()
