@@ -458,7 +458,6 @@ class Binder:
         self.error = None
 
     def bind_accounts(self, accounts_package):
-        is_repeated = False
         tzid, number, is_repeated = self.get_new_number()
         self.window.status_bar.set('Делаю привязку Mobile Guard...')
         for account_data in accounts_package:
@@ -504,9 +503,12 @@ class Binder:
                     time.sleep(5)
                     continue
                 raise SteamAuthError('Steam addphone request failed: %s' % number)
+
             insert_log('Жду SMS код...')
             try:
                 sms_code = self.sms_service.get_sms_code(tzid, is_repeated)
+                if not is_repeated:
+                    is_repeated = True
                 if not sms_code:
                     insert_log('Не доходит SMS. Пробую снова...')
                     continue
@@ -516,6 +518,7 @@ class Binder:
                 tzid, number, is_repeated = self.get_new_number(tzid)
                 insert_log('Новый номер: ' + number)
                 continue
+
             mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
             response = steamreg.steam_checksms_request(steam_client, sms_code)
             if 'The SMS code is incorrect' in response.get('error_text', ''):
@@ -538,9 +541,10 @@ class Binder:
         txt_path = os.path.join(accounts_dir, login + '.txt')
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
 
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}'.format(
-                    login, passwd, str(datetime.date.today()), number, steamid))
+        # with open(txt_path, 'w', encoding='utf-8') as f:
+        #     f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}'.format(
+        #             login, passwd, str(datetime.date.today()), number, steamid))
+
         with open('accounts_attached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
