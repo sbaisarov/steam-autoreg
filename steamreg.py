@@ -138,7 +138,7 @@ class SteamRegger:
                 time.sleep(3)
                 continue
             logger.info(str(mobguard_data))
-            if mobguard_data['status'] == 84:
+            if mobguard_data['status'] != 1:
                 time.sleep(5)
                 continue
             break
