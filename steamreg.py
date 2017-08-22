@@ -259,19 +259,20 @@ class SteamRegger:
             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
         chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
-        login_name, password = [generate_credential(2, 4) for _ in range(2)]
-        email = generate_credential(7, 10)
-        if not email_domain:
-            email_domain = generate_credential(2, 4) + '.xyz'
-        email += '@%s' % email_domain
         while True:
+            login_name = generate_credential(2, 4)
             r = session.post('https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
                               .format(login_name)).json()
             logger.info(str(r))
             if r['bAvailable']:
                 break
-            login_name = generate_credential()
             time.sleep(3)
+
+        password = generate_credential(2, 4)
+        # email = generate_credential(7, 10)
+        if not email_domain:
+            email_domain = generate_credential(2, 4) + '.xyz'
+        email = '%s@%s' % (login_name, email_domain)
         while True:
             captcha_id, gid = generate_captcha()
             captcha_text = resolve_captcha(captcha_id, gid)
