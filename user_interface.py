@@ -155,15 +155,58 @@ class MainWindow:
                 obj.set(value)
 
     def run_process(self):
+        if not self.check_input():
+            return
+        self.save_input()
+        try:
+            if self.mobile_bind.get():
+                self.registrate_with_binding()
+            elif self.autoreg.get():
+                self.registrate_without_binding()
+        except Exception:
+            error = traceback.format_exc()
+            showwarning("Внутренняя ошибка программы", error)
+            logger.critical(error)
+
+        self.status_bar.set('Готов...')
+
+    def check_input(self):
         if not self.manifest_path and self.import_mafile.get():
             showwarning("Ошибка", "Не указан путь к manifest файлу Steam Desktop Authenticator",
                         parent=self.parent)
-            return
+            return False
 
         if not self.rucaptcha_api_key.get() and self.autoreg.get():
             showwarning("Ошибка", "Не указан api ключ RuCaptcha")
-            return
+            return False
 
+        if self.autoreg.get():
+            try:
+                self.check_rucaptcha_key()
+            except RuCaptchaError as err:
+                showwarning("Ошибка RuCaptcha", err, parent=self.parent)
+                return False
+            try:
+                if not 0 < self.new_accounts_amount.get() <= 33:
+                    raise ValueError
+            except (TclError, ValueError):
+                showwarning("Ошибка", "Количество аккаунтов для "
+                                      "регистрации должно составлять от 1 до 33",
+                            parent=self.parent)
+                return False
+
+        if self.mobile_bind.get():
+            try:
+                if not 0 < self.accounts_per_number.get() <= 30:
+                    raise ValueError
+            except (TclError, ValueError):
+                showwarning("Ошибка", "Введите корректное число аккаунтов, "
+                                      "связанных с 1 номером (больше нуля но меньше 30-и).",
+                            parent=self.parent)
+                return False
+        return True
+
+    def save_input(self):
         for field, value in self.__dict__.items():
             if field in ('status_bar', 'license'):
                 continue
@@ -173,27 +216,9 @@ class MainWindow:
                 except AttributeError:
                     pass
                 self.userdata[field] = value
-        try:
-            if self.autoreg.get():
-                self.check_rucaptcha_key()
-            if self.mobile_bind.get():
-                self.registrate_with_binding()
-            else:
-                if self.autoreg.get():
-                    self.registrate_without_binding()
-        except Exception:
-            error = traceback.format_exc()
-            showwarning("Внутренняя ошибка программы", error)
-            logger.critical(error)
-
-        self.status_bar.set('Готов...')
 
     def registrate_without_binding(self):
         new_accounts_amount = self.new_accounts_amount.get()
-        if not new_accounts_amount:
-            showwarning("Ошибка", "Укажите количество аккаунтов для регистрации")
-            return
-
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
         threads = []
         for _ in range(20):
@@ -219,16 +244,6 @@ class MainWindow:
         if not self.accounts_path and not self.autoreg.get():
             showwarning("Ошибка", "Не указан путь к файлу с данными от аккаунтов. "
                                   "Если у вас нет своих аккаунтов, то поставьте галочку 'Создавать новые аккаунты'",
-                        parent=self.parent)
-            return
-
-        try:
-            accounts_per_number = self.accounts_per_number.get()
-            if not 0 < accounts_per_number <= 30:
-                raise ValueError
-        except (TypeError, ValueError):
-            showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                                  "связанных с 1 номером (больше нуля но меньше 30-и).",
                         parent=self.parent)
             return
 
