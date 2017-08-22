@@ -187,7 +187,7 @@ class MainWindow:
                 showwarning("Ошибка RuCaptcha", err, parent=self.parent)
                 return False
             try:
-                if not 0 < self.new_accounts_amount.get() <= 33:
+                if self.new_accounts_amount.get() <= 0:
                     raise ValueError
             except (TclError, ValueError):
                 showwarning("Ошибка", "Количество аккаунтов для "
