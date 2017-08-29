@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from steampy.client import SteamClient
 from steampy import guard
 
-logger = logging.getLogger()
+logger = logging.getLogger('__main__')
 
 class SteamAuthError(Exception): pass
 class SteamCaptchaError(Exception): pass
@@ -161,25 +161,26 @@ class SteamRegger:
     @staticmethod
     def steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code):
         one_time_code = guard.generate_one_time_code(mobguard_data['shared_secret'], int(time.time()))
+        data= {
+            "steamid": steam_client.oauth['steamid'],
+            "activation_code": sms_code,
+            "access_token": steam_client.oauth['oauth_token'],
+            'authenticator_code': one_time_code,
+            'authenticator_time': int(time.time())
+        }
         while True:
             try:
                 fin_resp = steam_client.session.post(
                     'https://api.steampowered.com/ITwoFactorService/FinalizeAddAuthenticator/v0001/',
-                    data={
-                        "steamid": steam_client.oauth['steamid'],
-                        "activation_code": sms_code,
-                        "access_token": steam_client.oauth['oauth_token'],
-                        'authenticator_code': one_time_code,
-                        'authenticator_time': int(time.time())
-                    }).json()['response']
-                logger.info(str(fin_resp))
-                if (fin_resp.get('want_more') or
-                    fin_resp['status'] == 88):
-                    time.sleep(5)
-                    continue
-                break
-            except json.decoder.JSONDecodeError:
-                pass
+                    data=data).json()['response']
+            except json.decoder.JSONDecodeError as err:
+                logger.error("json error in the FinalizeAddAuthenticator request")
+                time.sleep(3)
+            logger.info(str(fin_resp))
+            if (fin_resp.get('want_more') or fin_resp['status'] == 88):
+                time.sleep(5)
+                continue
+            break
 
         return fin_resp['success']
 

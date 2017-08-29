@@ -38,7 +38,7 @@ if not os.path.exists('database/userdata.txt'):
         f.write('{}')
 
 logging.getLogger("requests").setLevel(logging.ERROR)
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
 handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
 handler.setFormatter(formatter)

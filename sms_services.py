@@ -7,7 +7,7 @@ import logging
 class OnlineSimError(Exception): pass
 class SmsActivateError(Exception): pass
 
-logger = logging.getLogger()
+logger = logging.getLogger('__main__')
 
 class OnlineSimApi:
 
