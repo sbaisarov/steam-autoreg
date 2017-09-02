@@ -23,6 +23,18 @@ class SteamRegger:
 
     def __init__(self, proxy=None):
         self.proxy = proxy
+        self.email = None
+
+    @staticmethod
+    def handle_request(session, url, data={}):
+        while True:
+            try:
+                resp = session.post(url, data=data, timeout=5).json()
+                return resp
+            except requests.exceptions.Timeout as err:
+                logger.error('%s %s', err, url)
+            except json.decoder.JSONDecodeError as err:
+                logger.error('%s %s', err, url)
 
     def registrate_account(self):
         mafile = {}
@@ -41,7 +53,6 @@ class SteamRegger:
         logger.info(mafile)
 
         return mafile
-
 
     def mobile_login(self, login_name, password, email=None, email_passwd=None):
         steam_client = SteamClient(None, self.proxy)
@@ -69,9 +80,7 @@ class SteamRegger:
 
         return steam_client
 
-
-    @staticmethod
-    def steam_addphone_request(steam_client, phone_num):
+    def addphone_request(self, steam_client, phone_num):
         sessionid = steam_client.session.cookies.get(
                     'sessionid', domain='steamcommunity.com')
         data = {
@@ -80,13 +89,12 @@ class SteamRegger:
             'sessionid': sessionid
         }
         is_valid_number = True
-        response = steam_client.session.post(
-            'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+        response = self.handle_request(steam_client.session,
+            'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(str(response))
         return response
 
-    @staticmethod
-    def has_phone_attached(steam_client):
+    def is_phone_attached(self, steam_client):
         sessionid = steam_client.session.cookies.get(
                     'sessionid', domain='steamcommunity.com')
         data = {
@@ -96,8 +104,8 @@ class SteamRegger:
         }
         while True:
             try:
-                response = steam_client.session.post(
-                    'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+                response = self.handle_request(steam_client.session,
+                    'https://steamcommunity.com/steamguard/phoneajax', data=data)
                 break
             except json.decoder.JSONDecodeError as err:
                 logger.error(err)
@@ -105,9 +113,7 @@ class SteamRegger:
 
         return response['has_phone']
 
-
-    @staticmethod
-    def steam_checksms_request(steam_client, sms_code):
+    def checksms_request(self, steam_client, sms_code):
         sessionid = steam_client.session.cookies.get(
                     'sessionid', domain='steamcommunity.com')
         data = {
@@ -115,17 +121,16 @@ class SteamRegger:
             'arg': sms_code,
             'sessionid': sessionid
         }
-        response = steam_client.session.post(
-            'https://steamcommunity.com/steamguard/phoneajax', data=data).json()
+        response = self.handle_request(steam_client.session,
+            'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(str(response))
         return response
 
-    @staticmethod
-    def steam_add_authenticator_request(steam_client):
+    def add_authenticator_request(self, steam_client):
         device_id = guard.generate_device_id(steam_client.oauth['steamid'])
         while True:
             try:
-                mobguard_data = steam_client.session.post(
+                mobguard_data = self.handle_request(steam_client.session,
                     'https://api.steampowered.com/ITwoFactorService/AddAuthenticator/v0001/',
                     data = {
                         "access_token": steam_client.oauth['oauth_token'],
@@ -133,7 +138,7 @@ class SteamRegger:
                         "authenticator_type": "1",
                         "device_identifier": device_id,
                         "sms_phone_id": "1"
-                    }).json()['response']
+                    })['response']
             except json.decoder.JSONDecodeError:
                 time.sleep(3)
                 continue
@@ -157,9 +162,7 @@ class SteamRegger:
 
         return mobguard_data
 
-
-    @staticmethod
-    def steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code):
+    def finalize_authenticator_request(self, steam_client, mobguard_data, sms_code):
         one_time_code = guard.generate_one_time_code(mobguard_data['shared_secret'], int(time.time()))
         data= {
             "steamid": steam_client.oauth['steamid'],
@@ -170,16 +173,19 @@ class SteamRegger:
         }
         while True:
             try:
-                fin_resp = steam_client.session.post(
+                fin_resp = self.handle_request(steam_client.session,
                     'https://api.steampowered.com/ITwoFactorService/FinalizeAddAuthenticator/v0001/',
-                    data=data).json()['response']
+                    data=data)['response']
             except json.decoder.JSONDecodeError as err:
                 logger.error("json error in the FinalizeAddAuthenticator request")
                 time.sleep(3)
+                continue
             logger.info(str(fin_resp))
             if (fin_resp.get('want_more') or fin_resp['status'] == 88):
                 time.sleep(5)
                 continue
+            elif fin_resp['status'] == 2:
+                fin_resp['success'] = True
             break
 
         return fin_resp['success']
@@ -217,12 +223,12 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-
     def create_account(self, rucaptcha_api_key, email_domain=None):
-        def generate_credential(start, end):
-            random.shuffle(chr_sets)
+        def generate_credential(start, end, uppercase=True):
+            selection = char_sets if uppercase else char_sets[:2]
+            random.shuffle(selection)
             func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
-            credential = ''.join(map(func, chr_sets))
+            credential = ''.join(map(func, selection))
             return credential
 
         def generate_captcha():
@@ -236,7 +242,6 @@ class SteamRegger:
 
             captcha_id = resp.text.partition('|')[2]
             return captcha_id, gid
-
 
         def resolve_captcha(captcha_id, gid):
             while True:
@@ -259,11 +264,11 @@ class SteamRegger:
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
-        chr_sets = [string.ascii_lowercase, string.ascii_uppercase, string.digits]
+        char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
         while True:
-            login_name = generate_credential(2, 4)
-            r = session.post('https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
-                              .format(login_name)).json()
+            login_name = generate_credential(2, 4, uppercase=False)
+            r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
+                                             .format(login_name))
             logger.info(str(r))
             if r['bAvailable']:
                 break
@@ -274,6 +279,7 @@ class SteamRegger:
         if not email_domain:
             email_domain = generate_credential(2, 4) + '.xyz'
         email = '%s@%s' % (login_name, email_domain)
+        self.email = email
         while True:
             captcha_id, gid = generate_captcha()
             captcha_text = resolve_captcha(captcha_id, gid)
@@ -291,9 +297,10 @@ class SteamRegger:
                 'lt': '0'
             }
             try:
-                resp = session.post('https://store.steampowered.com/join/createaccount/',
-                                    data=data).json()
-            except json.decoder.JSONDecodeError:
+                resp = self.handle_request(session, 'https://store.steampowered.com/join/createaccount/',
+                                           data=data)
+            except json.decoder.JSONDecodeError as err:
+                logger.error(err)
                 continue
             if resp['bSuccess']:
                 break
@@ -305,7 +312,7 @@ class SteamRegger:
         return login_name, password
 
     @staticmethod
-    def activate_steam_account(steam_client):
+    def activate_account(steam_client):
         url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
         data = {
             'sessionID': steam_client.get_session_id(),
