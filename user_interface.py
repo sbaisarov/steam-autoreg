@@ -72,6 +72,7 @@ class MainWindow:
         self.autoreg = IntVar()
         self.import_mafile = IntVar()
         self.mobile_bind = IntVar()
+        self.fold_accounts = IntVar()
         self.onlinesim_api_key = StringVar()
         self.rucaptcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
@@ -122,21 +123,29 @@ class MainWindow:
         mobile_bind_checkbutton = Checkbutton(frame, text='Привязывать Mobile Guard',
                                               variable=self.mobile_bind)
         mobile_bind_checkbutton.grid(row=6, column=0, pady=3, sticky=W)
+        mobile_bind_checkbutton = Checkbutton(frame, text='Раскладывать по папкам',
+                                              variable=self.fold_accounts)
+        mobile_bind_checkbutton.grid(row=6, column=1, pady=3, sticky=W)
+
         start_button = Button(frame, text='Начать', command=self.start_process,
                               bg='#CEC8C8', relief=GROOVE, width=50)
         start_button.grid(pady=10, columnspan=2)
 
         log_frame = Frame(self.parent)
-        errorlog_label = Label(log_frame, text='Логи:')
-        errorlog_label.grid(row=0, column=0, pady=5, sticky=W)
+        log_label = Label(log_frame, text='Логи:')
+        log_label.grid(row=0, column=0, pady=5, sticky=W)
         scrollbar = Scrollbar(log_frame, orient=VERTICAL)
         self.log_box = Listbox(log_frame, yscrollcommand=scrollbar.set)
         self.log_box.grid(row=1, column=0, sticky=NSEW)
+        self.log_box.bind('<Enter>', self.freeze_log)
+        self.log_box.bind('<Leave>', self.unfreeze_log)
+        self.log_frozen = False
         scrollbar["command"] = self.log_box.yview
         scrollbar.grid(row=1, column=1, sticky=NS)
+        scrollbar.bind('<Enter>', self.freeze_log)
+        scrollbar.bind('<Leave>', self.unfreeze_log)
 
         frame.grid(row=0, column=0)
-
         log_frame.grid(row=1, column=0, sticky=NSEW)
         log_frame.columnconfigure(0, weight=999)
         log_frame.columnconfigure(1, weight=1)
@@ -153,6 +162,17 @@ class MainWindow:
             else:
                 obj = self.__getattribute__(attr)
                 obj.set(value)
+
+    def add_log(self, message):
+        self.log_box.insert(END, message)
+        if not self.log_frozen:
+            self.log_box.yview(END)
+
+    def freeze_log(self, *ignore):
+        self.log_frozen = True
+
+    def unfreeze_log(self, *ignore):
+        self.log_frozen = False
 
     def run_process(self):
         if not self.check_input():
@@ -261,13 +281,14 @@ class MainWindow:
             self.status_bar.set('Создаю аккаунты, решаю капчи...')
             new_accounts = []
             threads = []
+            remainder = new_accounts_amount - ctr
+            if remainder < accounts_per_number:
+                accounts_per_number = remainder
             for _ in range(accounts_per_number):
-                t = RegistrationThread(self, accounts_per_number, new_accounts) # transfer main window object
+                t = RegistrationThread(self, accounts_per_number, new_accounts)  # transfer main window object
                 t.start()
                 threads.append(t)
                 ctr += 1
-                if ctr == new_accounts_amount:
-                    break
             for thread in threads:
                 thread.join()
                 if thread.error:
@@ -444,8 +465,7 @@ class RegistrationThread(threading.Thread):
                                                 self.window.email_domain.get())
         logger.info('Аккаунт: %s:%s', login, passwd)
         with RegistrationThread.lock:
-            self.window.log_box.insert(END, 'Аккаунт зарегистрирован: %s %s' % (login, passwd))
-            logger.info('account data: %s %s', login, passwd)
+            self.window.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
             if not self.window.mobile_bind.get():
                 self.save_unattached_account(login, passwd)
         steam_client = SteamClient()
@@ -456,7 +476,7 @@ class RegistrationThread(threading.Thread):
                 break
             except AttributeError:
                 time.sleep(3)
-        steamreg.activate_steam_account(steam_client)
+        steamreg.activate_account(steam_client)
         steamreg.remove_intentory_privacy(steam_client)
         if self.result is not None:
             self.result.append((login, passwd))
@@ -464,6 +484,22 @@ class RegistrationThread(threading.Thread):
     def save_unattached_account(self, login, passwd):
         with open('accounts_unattached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
+
+    @staticmethod
+    def generate_mailbox():
+        ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
+        ws = create_connection('wss://dropmail.me/websocket', sslopt=ssl_option)
+        mailbox = ws.recv().partition(':')[0].lstrip('A')
+        ws.recv()  # skip the message with domains
+        return mailbox, ws
+
+    @staticmethod
+    def fetch_email_code(websocket):
+        regexr = r'to update your email address:\s+(.+)\s+'
+        opcode, data = websocket.recv_data()
+        mail = json.loads(data.decode('utf-8').lstrip('I'))['text']
+        guard_code = re.search(regexr, mail).group(1).rstrip()
+        return guard_code
 
 class Binder:
 
@@ -487,19 +523,25 @@ class Binder:
                 insert_log(err)
                 continue
 
-            if steamreg.has_phone_attached(steam_client):
+            if steamreg.is_phone_attached(steam_client):
                 insert_log('К аккаунту уже привязан номер')
                 continue
 
-            sms_code, mobguard_data, number, tzid = self.add_authenticator(insert_log, steam_client,
-                                                                           number, tzid, is_repeated)
+            try:
+                sms_code, mobguard_data, number, tzid = self.add_authenticator(insert_log, steam_client,
+                                                                               number, tzid, is_repeated)
+            except SteamAuthError:
+                error = 'Не удается привязать номер к аккаунту: ' + login
+                logger.error(error)
+                insert_log(error)
+                continue
             is_repeated = True
             insert_log('Делаю запрос на привязку гуарда...')
-            steamreg.steam_finalize_authenticator_request(steam_client, mobguard_data, sms_code)
+            steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
             mobguard_data['account_password'] = passwd
             self.save_attached_account(mobguard_data, login, passwd, number)
             if not self.window.autoreg.get():
-                steamreg.activate_steam_account(steam_client)
+                steamreg.activate_account(steam_client)
                 steamreg.remove_intentory_privacy(steam_client)
             insert_log('Guard успешно привязан')
 
@@ -508,7 +550,7 @@ class Binder:
     def add_authenticator(self, insert_log, steam_client, number, tzid, is_repeated):
         while True:
             insert_log('Делаю запрос Steam на добавление номера...')
-            response = steamreg.steam_addphone_request(steam_client, number)
+            response = steamreg.addphone_request(steam_client, number)
             if not response['success']:
                 if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
                     insert_log('Стим сообщил о том, ему не удалось отправить SMS')
@@ -534,8 +576,8 @@ class Binder:
                 insert_log('Новый номер: ' + number)
                 continue
 
-            mobguard_data = steamreg.steam_add_authenticator_request(steam_client)
-            response = steamreg.steam_checksms_request(steam_client, sms_code)
+            mobguard_data = steamreg.add_authenticator_request(steam_client)
+            response = steamreg.checksms_request(steam_client, sms_code)
             if 'The SMS code is incorrect' in response.get('error_text', ''):
                 insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
                 continue
@@ -551,14 +593,22 @@ class Binder:
         return tzid, number, is_repeated
 
     def save_attached_account(self, mobguard_data, login, passwd, number):
+        if self.window.mobile_bind.get():
+            if self.window.autoreg.get():
+                accounts_dir = 'new_accounts'
+                if self.window.fold_accounts.get():
+                    os.makedirs(login)
+                    accounts_dir += r'\%s' % login
+            else:
+                accounts_dir = 'old_accounts'
+
         steamid = mobguard_data['Session']['SteamID']
-        accounts_dir = 'new_accounts' if self.window.autoreg.get() else 'old_accounts'
         txt_path = os.path.join(accounts_dir, login + '.txt')
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
 
-        # with open(txt_path, 'w', encoding='utf-8') as f:
-        #     f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}'.format(
-        #             login, passwd, str(datetime.date.today()), number, steamid))
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}\nEmail: {}\nRCODE: {}'.format(
+                    login, passwd, str(datetime.date.today()), number, steamid, steamreg.email, mobguard_data['revocation_code']))
 
         with open('accounts_attached.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
@@ -580,12 +630,12 @@ class Binder:
 
     def log_wrapper(self, login):
         def insert_log(text):
-            self.window.log_box.insert(END, '%s (%s)' % (text, login))
+            self.window.add_log('%s (%s)' % (text, login))
         return insert_log
 
 root = Tk()
 window = MainWindow(root)
 root.iconbitmap('database/app.ico')
-root.title('Steam Auto Authenticator v0.5')
+root.title('Steam Auto Authenticator v0.6')
 root.protocol("WM_DELETE_WINDOW", window.app_quit)
 root.mainloop()
