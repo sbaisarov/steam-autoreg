@@ -29,7 +29,7 @@ from steampy.guard import generate_one_time_code
 from steamreg import *
 from sms_services import *
 
-for dir_name in ('new_accounts', 'old_accounts'):
+for dir_name in ('новые_аккаунты', 'загруженные_аккаунты'):
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
@@ -51,7 +51,6 @@ sys.excepthook = uncaught_exceptions_handler
 
 steamreg = SteamRegger()
 
-
 class MainWindow:
 
     def __init__(self, parent):
@@ -67,6 +66,8 @@ class MainWindow:
 
         self.manifest_path = ''
         self.accounts_path = ''
+        self.email_boxes_path = ''
+        self.email_boxes_data = None
         self.manifest_data = None
         self.old_accounts = None
         self.autoreg = IntVar()
@@ -84,10 +85,11 @@ class MainWindow:
         if self.userdata:
             self.set_attributes()
 
-        menubar = Menu(parent)
-        parent['menu'] = menubar
-        menubar.add_command(label="Путь к аккаунтам", command=self.accounts_open)
-        menubar.add_command(label="Путь к SDA Manifest", command=self.manifest_open)
+        self.menubar = Menu(parent)
+        parent['menu'] = self.menubar
+        # self.menubar.add_command(label="Путь к аккаунтам", command=self.accounts_open)
+        self.menubar.add_command(label="Путь к SDA Manifest", command=self.manifest_open)
+        self.menubar.add_command(label="Загрузить свои почты", command=self.email_boxes_open)
 
         onlinesim_apikey_label = Label(frame, text='onlinesim api key:')
         onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
@@ -115,7 +117,7 @@ class MainWindow:
         ctr_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
 
         autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
-                                          variable=self.autoreg)
+                                          variable=self.autoreg, command=lambda: self.toogle_menu("Путь к аккаунтам"))
         autoreg_checkbutton.grid(row=5, column=0, sticky=W)
         mafile_checkbutton = Checkbutton(frame, text='Импортировать maFile в SDA',
                                          variable=self.import_mafile)
@@ -174,6 +176,15 @@ class MainWindow:
     def unfreeze_log(self, *ignore):
         self.log_frozen = False
 
+    def toogle_menu(self, label):
+        if self.autoreg.get():
+            try:
+                self.menubar.delete("Путь к аккаунтам")
+            except TclError:
+                pass
+        else:
+            self.menubar.add_command(label="Путь к аккаунтам", command=self.accounts_open)
+
     def run_process(self):
         if not self.check_input():
             return
@@ -183,6 +194,10 @@ class MainWindow:
                 self.registrate_with_binding()
             elif self.autoreg.get():
                 self.registrate_without_binding()
+        except (OnlineSimError, RuCaptchaError) as err:
+            showwarning(err.__class__.__name__, err,
+                        parent=self.parent)
+            logger.critical(err)
         except Exception:
             error = traceback.format_exc()
             showwarning("Внутренняя ошибка программы", error)
@@ -396,8 +411,6 @@ class MainWindow:
             with open(accounts_path, 'r') as f:
                 self.old_accounts = [i.rstrip().split(':') for i in f.readlines()]
         except (EnvironmentError, TypeError):
-            # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
-            #                        accounts_path, err), parent=self.parent)
             return
 
         self.status_bar.set("Файл загружен: %s" % os.path.basename(accounts_path))
@@ -409,6 +422,24 @@ class MainWindow:
         while start < len(self.old_accounts):
             yield self.old_accounts[start:end]
             start, end = end, end + span
+
+    def email_boxes_open(self):
+        dir_ = (os.path.dirname(self.emails_path)
+                if self.email_boxes_path is not None else '.')
+        emails_path = askopenfilename(
+                    title='Email адреса',
+                    initialdir=dir_,
+                    filetypes=[('Text file', '*.txt')],
+                    defaultextension='.txt', parent=self.parent)
+        if emails_path:
+            return self.load_emails(emails_path)
+
+    def load_emails(self, emails_path):
+        try:
+            with open(emails_path, 'r') as f:
+                self.email_boxes_data = [i.strip() for i in f.readlines()]
+        except (EnvironmentError, TypeError):
+            return
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -427,8 +458,6 @@ class MainWindow:
                 self.manifest_data = json.load(f)
             self.manifest_path = manifest_path
         except (EnvironmentError, TypeError):
-            # showwarning("Ошибка", "Не удалось загрузить: {0}:\n{1}".format(
-            #                        manifest_path, err), parent=self.parent)
             pass
 
     def app_quit(self, *ignore):
@@ -461,6 +490,7 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
+
         login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(),
                                                 self.window.email_domain.get())
         logger.info('Аккаунт: %s:%s', login, passwd)
@@ -482,7 +512,7 @@ class RegistrationThread(threading.Thread):
             self.result.append((login, passwd))
 
     def save_unattached_account(self, login, passwd):
-        with open('accounts_unattached.txt', 'a+') as f:
+        with open('непривязанные_аккаунты.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
     @staticmethod
@@ -595,12 +625,12 @@ class Binder:
     def save_attached_account(self, mobguard_data, login, passwd, number):
         if self.window.mobile_bind.get():
             if self.window.autoreg.get():
-                accounts_dir = 'new_accounts'
+                accounts_dir = 'новые_аккаунты'
                 if self.window.fold_accounts.get():
                     os.makedirs(login)
                     accounts_dir += r'\%s' % login
             else:
-                accounts_dir = 'old_accounts'
+                accounts_dir = 'загруженные_аккаунты'
 
         steamid = mobguard_data['Session']['SteamID']
         txt_path = os.path.join(accounts_dir, login + '.txt')
@@ -610,7 +640,7 @@ class Binder:
             f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}\nEmail: {}\nRCODE: {}'.format(
                     login, passwd, str(datetime.date.today()), number, steamid, steamreg.email, mobguard_data['revocation_code']))
 
-        with open('accounts_attached.txt', 'a+') as f:
+        with open('привязанные_аккаунты.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
         if self.window.import_mafile.get():
