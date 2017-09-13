@@ -5,6 +5,7 @@ import logging
 import urllib
 import os
 import sys
+import random
 import datetime
 import uuid
 import json
@@ -16,13 +17,18 @@ import threading
 from pkgutil import iter_modules
 
 installed_modules = [item[1] for item in iter_modules()]
-if 'requests' not in installed_modules:
-    print("Installing packages. Please wait...")
-    os.system('pip install bs4 rsa')
-    os.system('pip install https://github.com/Shamanovski/requests/archive/master.zip')
-    print("The Installation is complete")
+required_modules = {
+    'bs4': 'bs4',
+    'rsa': 'rsa',
+    'requests': 'https://github.com/Shamanovski/requests/archive/master.zip',
+    'tempmail': 'https://github.com/Shamanovski/temp-mail/archive/master.zip'
+}
+for module_name, module in required_modules.items():
+    if module_name not in installed_modules:
+        os.system('pip install %s' % module)
 
 import requests
+from tempmail import TempMail
 
 from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
@@ -47,21 +53,23 @@ logger.setLevel(logging.INFO)
 
 def uncaught_exceptions_handler(type, value, tb):
     logger.critical("Uncaught exception: {0} {1}\n{2}".format(type, value, traceback.format_tb(tb)))
-sys.excepthook = uncaught_exceptions_handler
 
+sys.excepthook = uncaught_exceptions_handler
 steamreg = SteamRegger()
+with open("interface_states.json", "r") as f:
+    STATES = json.load(f)
 
 class MainWindow:
 
     def __init__(self, parent):
         self.parent = parent
-        frame = Frame(self.parent)
+        self.frame = Frame(self.parent)
         with open('database/userdata.txt', 'r') as f:
             self.userdata = json.load(f)
 
         success = self.authorize_user()
         if not success:
-            self.deploy_activation_widgets(frame)
+            self.deploy_activation_widgets(self.frame)
             return
 
         self.manifest_path = ''
@@ -78,92 +86,146 @@ class MainWindow:
         self.rucaptcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
+        self.temp_mail = IntVar()
+        # self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
-
         self.status_bar = StringVar()
+
+        self.menubar = Menu(parent)
+        parent['menu'] = self.menubar
+
+        self.accounts_per_number_label = Label(self.frame, text='Количество аккаунтов на 1 номер:')
+        self.accounts_per_number_entry = Entry(self.frame, textvariable=self.accounts_per_number,
+                                               width=2, disabledforeground='#808080')
+        self.onlinesim_apikey_label = Label(self.frame, text='onlinesim api key:')
+        self.onlinesim_apikey_entry = Entry(self.frame, textvariable=self.onlinesim_api_key, disabledforeground='#808080')
+
+        self.new_accounts_amount_label = Label(self.frame, text='Количество аккаунтов для регистрации:')
+        self.new_accounts_amount_entry = Entry(self.frame, textvariable=self.new_accounts_amount, width=4, disabledforeground='#808080')
+        self.rucaptcha_apikey_label = Label(self.frame, text='rucaptcha api key:')
+        self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key, disabledforeground='#808080')
+
+        self.email_domain_label = Label(self.frame, text='Домен для email (по усмотрению, без @):')
+        self.email_domain_entry = Entry(self.frame, textvariable=self.email_domain, disabledforeground='#808080')
+
+        tools_frame = Frame(self.parent)
+        self.tools_label = Label(tools_frame, text='Инструменты:')
+        self.options_label = Label(tools_frame, text='Опции:')
+        self.autoreg_checkbutton = Checkbutton(tools_frame, text='Создавать новые аккаунты',
+                                               variable=self.autoreg, command=self.set_states,
+                                               disabledforeground='#808080')
+    #    self.private_email_boxes_checkbutton = Checkbutton(tools_frame, text='Использовать свои почты',
+    #                                                       variable=self.private_email_boxes, command=self.set_states,
+    #                                                       disabledforeground='#808080')
+        self.temp_mail_checkbutton = Checkbutton(tools_frame, text='Использовать временные почты',
+                                                 variable=self.temp_mail, command=self.set_states,
+                                                 disabledforeground='#808080')
+        self.mafile_checkbutton = Checkbutton(tools_frame, text='Импортировать maFile в SDA',
+                                              variable=self.import_mafile, command=self.set_states,
+                                              disabledforeground='#808080')
+        self.mobile_bind_checkbutton = Checkbutton(tools_frame, text='Привязывать Mobile Guard',
+                                                   variable=self.mobile_bind, command=self.set_states,
+                                                   disabledforeground='#808080')
+        self.fold_accounts_checkbutton = Checkbutton(tools_frame, text='Раскладывать по папкам',
+                                                     variable=self.fold_accounts, disabledforeground='#808080')
+
+        self.start_button = Button(tools_frame, text='Начать', command=self.start_process,
+                                   bg='#CEC8C8', relief=GROOVE, width=50)
+        tools_frame.grid(row=1, column=0, pady=5)
+
+        log_frame = Frame(self.parent)
+        self.log_label = Label(log_frame, text='Логи:')
+        self.scrollbar = Scrollbar(log_frame, orient=VERTICAL)
+        self.log_box = Listbox(log_frame, yscrollcommand=self.scrollbar.set)
+        self.log_box.bind('<Enter>', self.freeze_log)
+        self.log_box.bind('<Leave>', self.unfreeze_log)
+        self.log_frozen = False
+        self.scrollbar["command"] = self.log_box.yview
+        self.scrollbar.bind('<Enter>', self.freeze_log)
+        self.scrollbar.bind('<Leave>', self.unfreeze_log)
+
+        self.frame.grid(row=0, column=0)
+        log_frame.columnconfigure(0, weight=999)
+        log_frame.columnconfigure(1, weight=1)
+        log_frame.grid(row=2, column=0, sticky=NSEW)
+
+        self.status_bar_label = Label(log_frame, anchor=W, text='Готов...', textvariable=self.status_bar)
+        self.caption_label = Label(log_frame, text='by Shamanovsky')
 
         if self.userdata:
             self.set_attributes()
 
-        self.menubar = Menu(parent)
-        parent['menu'] = self.menubar
-        # self.menubar.add_command(label="Путь к аккаунтам", command=self.accounts_open)
-        self.menubar.add_command(label="Путь к SDA Manifest", command=self.manifest_open)
-        self.menubar.add_command(label="Загрузить свои почты", command=self.email_boxes_open)
+        self.pack_widgets()
 
-        onlinesim_apikey_label = Label(frame, text='onlinesim api key:')
-        onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
-        onlinesim_apikey_entry = Entry(frame, textvariable=self.onlinesim_api_key)
-        onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
+    def set_states(self):
+        for checkbutton_name, configs in sorted(STATES.items(), key=lambda item: item[1]["priority"]):
+            flag = self.__getattribute__(checkbutton_name).get()
+            for entry, state in configs.get("entries", {}).items():
+                state = self.adjust_state(flag, state)
+                self.__getattribute__(entry).configure(state=state)
+            for menu_item, states in configs.get("menubar", {}).items():
+                for menu_index, state in states.items():
+                    state = self.adjust_state(flag, state)
+                    self.__getattribute__(menu_item).entryconfig(menu_index, state=state)
+            for checkbutton_attr, state in configs.get("checkbuttons", {}).items():
+                state = self.adjust_state(flag, state)
+                self.__getattribute__(checkbutton_attr).configure(state=state)
 
-        onlinesim_apikey_label = Label(frame, text='rucaptcha api key:')
-        onlinesim_apikey_label.grid(row=1, column=0, pady=5, sticky=W)
-        onlinesim_apikey_entry = Entry(frame, textvariable=self.rucaptcha_api_key)
-        onlinesim_apikey_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
-
-        new_accounts_amount_label = Label(frame, text='Количество аккаунтов для регистрации:')
-        new_accounts_amount_label.grid(row=2, column=0, pady=5, sticky=W)
-        new_accounts_amount_entry = Entry(frame, textvariable=self.new_accounts_amount, width=4)
-        new_accounts_amount_entry.grid(row=2, column=1, pady=5, padx=5, sticky=W)
-
-        ctr_label = Label(frame, text='Количество аккаунтов на 1 номер:')
-        ctr_label.grid(row=3, column=0, pady=5, sticky=W)
-        ctr_entry = Entry(frame, textvariable=self.accounts_per_number, width=2)
-        ctr_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
-
-        ctr_label = Label(frame, text='Домен для email (по усмотрению, без @):')
-        ctr_label.grid(row=4, column=0, pady=5, sticky=W)
-        ctr_entry = Entry(frame, textvariable=self.email_domain)
-        ctr_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
-
-        autoreg_checkbutton = Checkbutton(frame, text='Создавать новые аккаунты',
-                                          variable=self.autoreg, command=lambda: self.toogle_menu("Путь к аккаунтам"))
-        autoreg_checkbutton.grid(row=5, column=0, sticky=W)
-        mafile_checkbutton = Checkbutton(frame, text='Импортировать maFile в SDA',
-                                         variable=self.import_mafile)
-        mafile_checkbutton.grid(row=5, column=1, pady=3)
-        mobile_bind_checkbutton = Checkbutton(frame, text='Привязывать Mobile Guard',
-                                              variable=self.mobile_bind)
-        mobile_bind_checkbutton.grid(row=6, column=0, pady=3, sticky=W)
-        mobile_bind_checkbutton = Checkbutton(frame, text='Раскладывать по папкам',
-                                              variable=self.fold_accounts)
-        mobile_bind_checkbutton.grid(row=6, column=1, pady=3, sticky=W)
-
-        start_button = Button(frame, text='Начать', command=self.start_process,
-                              bg='#CEC8C8', relief=GROOVE, width=50)
-        start_button.grid(pady=10, columnspan=2)
-
-        log_frame = Frame(self.parent)
-        log_label = Label(log_frame, text='Логи:')
-        log_label.grid(row=0, column=0, pady=5, sticky=W)
-        scrollbar = Scrollbar(log_frame, orient=VERTICAL)
-        self.log_box = Listbox(log_frame, yscrollcommand=scrollbar.set)
-        self.log_box.grid(row=1, column=0, sticky=NSEW)
-        self.log_box.bind('<Enter>', self.freeze_log)
-        self.log_box.bind('<Leave>', self.unfreeze_log)
-        self.log_frozen = False
-        scrollbar["command"] = self.log_box.yview
-        scrollbar.grid(row=1, column=1, sticky=NS)
-        scrollbar.bind('<Enter>', self.freeze_log)
-        scrollbar.bind('<Leave>', self.unfreeze_log)
-
-        frame.grid(row=0, column=0)
-        log_frame.grid(row=1, column=0, sticky=NSEW)
-        log_frame.columnconfigure(0, weight=999)
-        log_frame.columnconfigure(1, weight=1)
-
-        status_bar = Label(log_frame, anchor=W, text='Готов...', textvariable=self.status_bar)
-        status_bar.grid(row=2, column=0, columnspan=2, sticky=W, pady=5)
-        caption_label = Label(log_frame, text='by Shamanovsky')
-        caption_label.grid(row=2, column=0, sticky=E)
+    @staticmethod
+    def adjust_state(flag, state):
+        reversed_states = {NORMAL: DISABLED, DISABLED: NORMAL}
+        if not flag:
+            state = reversed_states[state]
+        return state
 
     def set_attributes(self):
-        for attr, value in self.userdata.items():
-            if attr == 'manifest_path':
+        for attr_name, value in self.userdata.items():
+            if attr_name == 'manifest_path':
                 self.load_manifest(value)
             else:
-                obj = self.__getattribute__(attr)
-                obj.set(value)
+                attribute = self.__getattribute__(attr_name)
+                attribute.set(value)
+
+    def pack_widgets(self):
+        self.load_menu = Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Загрузить...", menu=self.load_menu)
+        self.load_menu.add_command(label="Свои аккаунты", command=self.accounts_open)
+        # self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
+        self.load_menu.add_command(label="SDA Manifest", command=self.manifest_open)
+
+        self.onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
+        self.onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
+
+        self.rucaptcha_apikey_label.grid(row=1, column=0, pady=5, sticky=W)
+        self.rucaptcha_apikey_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
+
+        self.new_accounts_amount_label.grid(row=2, column=0, pady=5, sticky=W)
+        self.new_accounts_amount_entry.grid(row=2, column=1, pady=5, padx=5, sticky=W)
+
+        self.accounts_per_number_label.grid(row=3, column=0, pady=5, sticky=W)
+        self.accounts_per_number_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
+
+        self.email_domain_label.grid(row=4, column=0, pady=5, sticky=W)
+        self.email_domain_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
+
+        self.tools_label.grid(row=0, column=0, pady=3, sticky=W)
+        self.options_label.grid(row=2, column=0, pady=3, sticky=W)
+
+        self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
+        # self.private_email_boxes_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
+        self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
+
+        self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
+        self.mafile_checkbutton.grid(row=3, column=1, pady=1)
+        self.fold_accounts_checkbutton.grid(row=4, column=1, pady=1, sticky=W)
+
+        self.start_button.grid(row=5, pady=10, columnspan=2)
+        self.log_label.grid(row=0, column=0, pady=5, sticky=W)
+        self.log_box.grid(row=1, column=0, sticky=NSEW)
+        self.scrollbar.grid(row=1, column=1, sticky=NS)
+        self.status_bar_label.grid(row=2, column=0, columnspan=2, sticky=W, pady=5)
+        self.caption_label.grid(row=2, column=0, sticky=E)
+        self.set_states()
 
     def add_log(self, message):
         self.log_box.insert(END, message)
@@ -175,15 +237,6 @@ class MainWindow:
 
     def unfreeze_log(self, *ignore):
         self.log_frozen = False
-
-    def toogle_menu(self, label):
-        if self.autoreg.get():
-            try:
-                self.menubar.delete("Путь к аккаунтам")
-            except TclError:
-                pass
-        else:
-            self.menubar.add_command(label="Путь к аккаунтам", command=self.accounts_open)
 
     def run_process(self):
         if not self.check_input():
@@ -257,7 +310,7 @@ class MainWindow:
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
         threads = []
         for _ in range(20):
-            t = RegistrationThread(self, new_accounts_amount) # transfer main window object
+            t = RegistrationThread(self, new_accounts_amount)  # transfer main window object
             t.start()
             threads.append(t)
 
@@ -358,15 +411,15 @@ class MainWindow:
 
     def deploy_activation_widgets(self, frame):
         self.license = StringVar()
-        license_key_label = Label(frame, text='Введите ключ активации программы:')
+        license_key_label = Label(self.frame, text='Введите ключ активации программы:')
         license_key_label.grid(row=0, column=0, pady=5, sticky=W)
         self.license_key_entry = Entry(frame)
         self.license_key_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
-        login_label = Label(frame, text='Ваш логин:')
+        login_label = Label(self.frame, text='Ваш логин:')
         login_label.grid(row=1, column=0, pady=5, sticky=W)
         self.login_entry = Entry(frame)
         self.login_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
-        check_license_bttn = Button(frame, text='Проверить лицензию',
+        check_license_bttn = Button(self.frame, text='Проверить лицензию',
                                     command=lambda: self.check_license(frame),
                                     relief=GROOVE)
         check_license_bttn.grid(sticky=W, padx=20, pady=5)
@@ -424,19 +477,19 @@ class MainWindow:
             start, end = end, end + span
 
     def email_boxes_open(self):
-        dir_ = (os.path.dirname(self.emails_path)
+        dir_ = (os.path.dirname(self.email_boxes_path)
                 if self.email_boxes_path is not None else '.')
-        emails_path = askopenfilename(
+        email_boxes_path = askopenfilename(
                     title='Email адреса',
                     initialdir=dir_,
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
-        if emails_path:
-            return self.load_emails(emails_path)
+        if email_boxes_path:
+            return self.load_emails(email_boxes_path)
 
-    def load_emails(self, emails_path):
+    def load_emails(self, email_boxes_path):
         try:
-            with open(emails_path, 'r') as f:
+            with open(email_boxes_path, 'r') as f:
                 self.email_boxes_data = [i.strip() for i in f.readlines()]
         except (EnvironmentError, TypeError):
             return
@@ -470,6 +523,7 @@ class RegistrationThread(threading.Thread):
 
     counter = 0
     lock = threading.Lock()
+    email_lock = threading.Lock()
 
     def __init__(self, window, amount, result=None):
         threading.Thread.__init__(self)
@@ -490,12 +544,16 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
-
-        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(),
-                                                self.window.email_domain.get())
+        if self.window.temp_mail.get():
+            with RegistrationThread.lock:
+                mailbox, tm_object = self.generate_mailbox()
+        else:
+            mailbox = self.window.email_domain.get()
+        logger.info("Email box: %s", mailbox)
+        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(), mailbox)
         logger.info('Аккаунт: %s:%s', login, passwd)
+        self.window.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
         with RegistrationThread.lock:
-            self.window.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
             if not self.window.mobile_bind.get():
                 self.save_unattached_account(login, passwd)
         steam_client = SteamClient()
@@ -504,8 +562,17 @@ class RegistrationThread(threading.Thread):
                 with RegistrationThread.lock:
                     steam_client.login(login, passwd)
                 break
-            except AttributeError:
+            except AttributeError as err:
+                logger.error(err)
                 time.sleep(3)
+        logger.info("Подтверждаю почту...")
+        if self.window.temp_mail.get():
+            self.window.add_log("Подтверждаю почту, жду письмо: " + login)
+            logger.info("Подтверждаю почту, жду письмо: " + login)
+            with RegistrationThread.email_lock:
+                self.confirm_email(steam_client, tm_object, mailbox)
+            self.window.add_log("Почта успешно подтверждена: " + login)
+            logger.info("Почта успешно подтверждена: " + login)
         steamreg.activate_account(steam_client)
         steamreg.remove_intentory_privacy(steam_client)
         if self.result is not None:
@@ -517,19 +584,45 @@ class RegistrationThread(threading.Thread):
 
     @staticmethod
     def generate_mailbox():
-        ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
-        ws = create_connection('wss://dropmail.me/websocket', sslopt=ssl_option)
-        mailbox = ws.recv().partition(':')[0].lstrip('A')
-        ws.recv()  # skip the message with domains
-        return mailbox, ws
+        resp = requests.get('https://temp-mail.ru/option/change')
+        available_domains = re.findall(r'<option value=".+">(.+)</option>', resp.text)
+        domain = random.choice(available_domains)
+        tm = TempMail(domain=domain)
+        mailbox = tm.generate_login() + domain
+        return mailbox, tm
 
     @staticmethod
-    def fetch_email_code(websocket):
-        regexr = r'to update your email address:\s+(.+)\s+'
-        opcode, data = websocket.recv_data()
-        mail = json.loads(data.decode('utf-8').lstrip('I'))['text']
-        guard_code = re.search(regexr, mail).group(1).rstrip()
-        return guard_code
+    def confirm_email(steam_client, tm_object, mailbox):
+        steam_client.session.get('http://store.steampowered.com')  # get store cookies
+        data = {
+            'snr': '1_5_9__403',
+            'action': 'add_to_cart',
+            'sessionid': steam_client.session.cookies.get('sessionid', domain='store.steampowered.com'),
+            'subid': '54029'
+        }
+        steam_client.session.post('http://store.steampowered.com/cart/', data=data)
+        success = False
+        while True:
+            steam_client.session.get('https://store.steampowered.com/checkout/?purchasetype=gift')
+            attempts = 0
+            while attempts < 8:
+                time.sleep(3)
+                try:
+                    resp = tm_object.get_mailbox(mailbox)[0]
+                    success = True
+                    break
+                except KeyError as err:
+                    logger.info("Waiting for the email... %s", steam_client.login_name)
+                attempts += 1
+
+            if success:
+                break
+            logger.info("No success in getting the email, trying again... Response: %s",
+                        tm_object.get_mailbox(mailbox))
+
+        link = re.search(r'https:.+validateemail.+(?=")', resp['mail_text_only']).group()
+        steam_client.session.get(link)
+        requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'])
 
 class Binder:
 
@@ -627,8 +720,8 @@ class Binder:
             if self.window.autoreg.get():
                 accounts_dir = 'новые_аккаунты'
                 if self.window.fold_accounts.get():
-                    os.makedirs(login)
-                    accounts_dir += r'\%s' % login
+                    accounts_dir = os.path.join(accounts_dir, login)
+                    os.makedirs(accounts_dir)
             else:
                 accounts_dir = 'загруженные_аккаунты'
 
