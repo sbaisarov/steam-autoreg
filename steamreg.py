@@ -26,10 +26,10 @@ class SteamRegger:
         self.email = None
 
     @staticmethod
-    def handle_request(session, url, data={}):
+    def handle_request(session, url, data={}, timeout=5):
         while True:
             try:
-                resp = session.post(url, data=data, timeout=5).json()
+                resp = session.post(url, data=data, timeout=timeout).json()
                 return resp
             except requests.exceptions.Timeout as err:
                 logger.error('%s %s', err, url)
@@ -223,12 +223,13 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account(self, rucaptcha_api_key, email_domain=None):
+    def create_account(self, rucaptcha_api_key, email=''):
         def generate_credential(start, end, uppercase=True):
-            selection = char_sets if uppercase else char_sets[:2]
-            random.shuffle(selection)
+            random.shuffle(char_sets)
             func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
-            credential = ''.join(map(func, selection))
+            credential = ''.join(map(func, char_sets))
+            if not uppercase:
+                credential = credential.lower()
             return credential
 
         def generate_captcha():
@@ -257,6 +258,16 @@ class SteamRegger:
             resolved_captcha = r.text.partition('|')[2].replace('amp;', '')
             return resolved_captcha
 
+        def generate_login_name():
+            while True:
+                login_name = generate_credential(2, 4, uppercase=False)
+                r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
+                                                 .format(login_name))
+                logger.info(str(r))
+                if r['bAvailable']:
+                    return login_name
+                time.sleep(3)
+
         session = requests.Session()
         if self.proxy:
             session.proxies.update(self.proxy)
@@ -265,26 +276,19 @@ class SteamRegger:
             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
         char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
-        while True:
-            login_name = generate_credential(2, 4, uppercase=False)
-            r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
-                                             .format(login_name))
-            logger.info(str(r))
-            if r['bAvailable']:
-                break
-            time.sleep(3)
-
-        password = generate_credential(2, 4)
-        # email = generate_credential(7, 10)
-        if not email_domain:
-            email_domain = generate_credential(2, 4) + '.xyz'
-        email = '%s@%s' % (login_name, email_domain)
+        if '@' not in email:
+            email_domain = email
+            if not email_domain:
+                email_domain = generate_credential(2, 4) + '.xyz'
+            email = '%s@%s' % (login_name, email_domain)
         self.email = email
         while True:
             captcha_id, gid = generate_captcha()
             captcha_text = resolve_captcha(captcha_id, gid)
             if not captcha_text:
                 continue
+            login_name = generate_login_name()
+            password = generate_credential(2, 4)
             data = {
                 'accountname': login_name,
                 'password': password,
@@ -296,18 +300,18 @@ class SteamRegger:
                 'count': '32',
                 'lt': '0'
             }
-            try:
-                resp = self.handle_request(session, 'https://store.steampowered.com/join/createaccount/',
-                                           data=data)
-            except json.decoder.JSONDecodeError as err:
-                logger.error(err)
-                continue
+            resp = self.handle_request(session, 'https://store.steampowered.com/join/createaccount/',
+                                       data=data, timeout=25)
             if resp['bSuccess']:
                 break
-            logger.error('Captcha text: %s. Captcha gid: %s. Response: %s',
-                         captcha_text, gid, resp)
-            r = requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
-                               .format(rucaptcha_api_key, captcha_id))
+            else:
+                if not resp.get('details', None):
+                    logger.error('Response: %s', resp)
+                    continue
+                logger.error('Captcha text: %s. Captcha gid: %s. Response: %s',
+                             captcha_text, gid, resp)
+                r = requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
+                                   .format(rucaptcha_api_key, captcha_id))
 
         return login_name, password
 
