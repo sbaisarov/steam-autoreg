@@ -101,7 +101,7 @@ class MainWindow:
         self.onlinesim_apikey_entry = Entry(self.frame, textvariable=self.onlinesim_api_key, disabledforeground='#808080')
 
         self.new_accounts_amount_label = Label(self.frame, text='Количество аккаунтов для регистрации:')
-        self.new_accounts_amount_entry = Entry(self.frame, textvariable=self.new_accounts_amount, width=4, disabledforeground='#808080')
+        self.new_accounts_amount_entry = Entry(self.frame, textvariable=self.new_accounts_amount, width=4,  disabledforeground='#808080')
         self.rucaptcha_apikey_label = Label(self.frame, text='rucaptcha api key:')
         self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key, disabledforeground='#808080')
 
@@ -662,7 +662,8 @@ class Binder:
             insert_log('Делаю запрос на привязку гуарда...')
             steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
             mobguard_data['account_password'] = passwd
-            self.save_attached_account(mobguard_data, login, passwd, number)
+            offer_link = steamreg.fetch_tradeoffer_link(steam_client)
+            self.save_attached_account(mobguard_data, login, passwd, number, offer_link)
             if not self.window.autoreg.get():
                 steamreg.activate_account(steam_client)
                 steamreg.remove_intentory_privacy(steam_client)
@@ -715,7 +716,7 @@ class Binder:
         number = self.sms_service.get_number(tzid)
         return tzid, number, is_repeated
 
-    def save_attached_account(self, mobguard_data, login, passwd, number):
+    def save_attached_account(self, mobguard_data, login, passwd, number, offer_link):
         if self.window.mobile_bind.get():
             if self.window.autoreg.get():
                 accounts_dir = 'новые_аккаунты'
@@ -728,16 +729,18 @@ class Binder:
         steamid = mobguard_data['Session']['SteamID']
         txt_path = os.path.join(accounts_dir, login + '.txt')
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
-
+        binding_date = datetime.date.today()
+        email = steamreg.email
+        revocation_code = mobguard_data['revocation_code']
         with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write('{}:{}\nДата привязки Guard: {}\nНомер: {}\nSteamID: {}\nEmail: {}\nRCODE: {}'.format(
-                    login, passwd, str(datetime.date.today()), number, steamid, steamreg.email, mobguard_data['revocation_code']))
+            f.write('{login}:{passwd}\nДата привязки Guard: {binding_date}\nНомер: {number}\n'
+                    'SteamID: {steamid}\nEmail: {email}\nRCODE: {revocation_code}\nТрейд ссылка: {offer_link}'.format(**locals()))
 
         with open('привязанные_аккаунты.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
         if self.window.import_mafile.get():
-            mafile_path = os.path.join(os.path.dirname(self.window.manifest_path), login + '.maFile')
+            sda_path = os.path.join(os.path.dirname(self.window.manifest_path), login + '.maFile')
             data = {
                 "encryption_iv": None,
                 "encryption_salt": None,
@@ -745,8 +748,9 @@ class Binder:
                 "steamid": int(steamid)
             }
             self.window.manifest_data["entries"].append(data)
-            with open(self.window.manifest_path, 'w') as f:
-                json.dump(self.window.manifest_data, f)
+            with open(self.window.manifest_path, 'w') as f1, open(sda_path, 'w') as f2:
+                json.dump(self.window.manifest_data, f1)
+                json.dump(mobguard_data, f2, separators=(',', ':'))
 
         with open(mafile_path, 'w') as f:
             json.dump(mobguard_data, f, separators=(',', ':'))
