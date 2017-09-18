@@ -143,7 +143,7 @@ class SteamRegger:
                 time.sleep(3)
                 continue
             logger.info(str(mobguard_data))
-            if mobguard_data['status'] != 1:
+            if mobguard_data['status'] not in (1, 2):
                 time.sleep(5)
                 continue
             break
@@ -280,8 +280,6 @@ class SteamRegger:
             email_domain = email
             if not email_domain:
                 email_domain = generate_credential(2, 4) + '.xyz'
-            email = '%s@%s' % (login_name, email_domain)
-        self.email = email
         while True:
             captcha_id, gid = generate_captcha()
             captcha_text = resolve_captcha(captcha_id, gid)
@@ -289,6 +287,8 @@ class SteamRegger:
                 continue
             login_name = generate_login_name()
             password = generate_credential(2, 4)
+            email = '%s@%s' % (login_name, email_domain)
+            self.email = email
             data = {
                 'accountname': login_name,
                 'password': password,
@@ -339,6 +339,17 @@ class SteamRegger:
             'inventoryGiftPrivacy': '1',
         }
         steam_client.session.post(url, data=data)
+
+    @staticmethod
+    def fetch_tradeoffer_link(steam_client):
+        url = 'http://steamcommunity.com/profiles/%s/tradeoffers/privacy' % steam_client.steamid
+        resp = steam_client.session.get(url)
+        regexr = 'https:\/\/steamcommunity.com\/tradeoffer\/new\/\?partner=.+&token=.+(?=" )'
+        try:
+            return re.search(regexr, resp.text).group()
+        except AttributeError as err:
+            logger.error("Failed to fetch offer link %s", err)
+            return ''
 
 if __name__ == '__main__':
     foo = SteamRegger()
