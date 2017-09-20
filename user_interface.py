@@ -87,7 +87,7 @@ class MainWindow:
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
         self.temp_mail = IntVar()
-        # self.private_email_boxes = IntVar()
+        self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
         self.status_bar = StringVar()
 
@@ -114,9 +114,6 @@ class MainWindow:
         self.autoreg_checkbutton = Checkbutton(tools_frame, text='Создавать новые аккаунты',
                                                variable=self.autoreg, command=self.set_states,
                                                disabledforeground='#808080')
-    #    self.private_email_boxes_checkbutton = Checkbutton(tools_frame, text='Использовать свои почты',
-    #                                                       variable=self.private_email_boxes, command=self.set_states,
-    #                                                       disabledforeground='#808080')
         self.temp_mail_checkbutton = Checkbutton(tools_frame, text='Использовать временные почты',
                                                  variable=self.temp_mail, command=self.set_states,
                                                  disabledforeground='#808080')
