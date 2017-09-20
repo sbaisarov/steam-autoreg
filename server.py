@@ -17,7 +17,6 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 app = Flask(__name__)
-db = shelve.open('clients', writeback=True)
 
 @app.route('/', methods=['GET', 'POST'])
 def handle_request():
@@ -28,17 +27,24 @@ def handle_request():
     data = {key: value for key, value in request.form.items()}
     ip = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
     key = data['key']
-    if key in keys:
-        if not db.get(key, None):
-            update_database(data, key, ip)
-            success = True
-            logger.info('VALID KEY. Added to the database: %s', data)
+    db = shelve.open('clients')
+    try:
+        if key in keys:
+            if not db.get(key, None):
+                data['ip'] = (ip, get_city_from_ip(ip))
+                logger.info('IP : %s', ip)
+                update_database(data, db, key)
+                success = True
+            else:
+                db_data = db[key]
+                success = check_device(data, db_data, ip)
         else:
-            success = check_device(data, key, ip)
-    else:
-        logger.info('WRONG KEY: %s, %s', data, ip)
+            logger.info('WRONG KEY: %s, %s', data, ip)
+    finally:
+        db.close()
 
     return json.dumps({'success': success}), 200
+
 
 def get_city_from_ip(ip_address):
     try:
@@ -47,15 +53,13 @@ def get_city_from_ip(ip_address):
         return 'Unknown'
     return resp['city']
 
-def update_database(data, key, ip):
-    logger.info('IP : %s', ip)
-    data['ip'] = (ip, get_city_from_ip(ip))
-    db[key] = {}
-    db[key].update(data)
-    db.sync()
 
-def check_device(data, key, ip):
-    db_data = db[key]
+def update_database(data, db, key):
+    db[key] = data
+    logger.info('VALID KEY. Added to the database: %s', data)
+
+
+def check_device(data, db_data, ip):
     if data['uid'] != db_data['uid']:
         logger.warning('UID is different (%s). The request has been declined: %s', data['uid'], db_data)
         return False
