@@ -276,10 +276,6 @@ class SteamRegger:
             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
         char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
-        if '@' not in email:
-            email_domain = email
-            if not email_domain:
-                email_domain = generate_credential(2, 4) + '.xyz'
         while True:
             captcha_id, gid = generate_captcha()
             captcha_text = resolve_captcha(captcha_id, gid)
@@ -287,8 +283,13 @@ class SteamRegger:
                 continue
             login_name = generate_login_name()
             password = generate_credential(2, 4)
-            email = '%s@%s' % (login_name, email_domain)
+            if '@' not in email:
+                email_domain = email
+                if not email_domain:
+                    email_domain = generate_credential(2, 4) + '.xyz'
+                email = '%s@%s' % (login_name, email_domain)
             self.email = email
+
             data = {
                 'accountname': login_name,
                 'password': password,
