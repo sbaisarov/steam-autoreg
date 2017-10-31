@@ -1,6 +1,4 @@
 import requests
-import datetime
-import base64
 import time
 import string
 import random
@@ -12,12 +10,15 @@ from bs4 import BeautifulSoup
 
 from steampy.client import SteamClient
 from steampy import guard
+from tempmail import TempMail
 
 logger = logging.getLogger('__main__')
+
 
 class SteamAuthError(Exception): pass
 class SteamCaptchaError(Exception): pass
 class RuCaptchaError(Exception): pass
+
 
 class SteamRegger:
 
@@ -121,8 +122,8 @@ class SteamRegger:
             'arg': sms_code,
             'sessionid': sessionid
         }
-        response = self.handle_request(steam_client.session,
-            'https://steamcommunity.com/steamguard/phoneajax', data=data)
+        response = self.handle_request(
+            steam_client.session, 'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(str(response))
         return response
 
@@ -213,17 +214,17 @@ class SteamRegger:
             sessionid = steam_client.session.cookies.get(
                         'sessionid', domain='steamcommunity.com')
             data = {
-            'domain': 'domain.com',
-            'agreeToTerms': 'agreed',
-            'sessionid': sessionid,
-            'Submit': 'Register'
+                'domain': 'domain.com',
+                'agreeToTerms': 'agreed',
+                'sessionid': sessionid,
+                'Submit': 'Register'
             }
             time.sleep(10)
             r = steam_client.session.post('https://steamcommunity.com/dev/registerkey', data=data)
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account(self, rucaptcha_api_key, email=''):
+    def create_account(self, rucaptcha_api_key, thread_lock):
         def generate_credential(start, end, uppercase=True):
             random.shuffle(char_sets)
             func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
@@ -236,7 +237,7 @@ class SteamRegger:
             gid = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1',
                                headers={'Host': 'store.steampowered.com'}).json()['gid']
             captcha_img = session.get('https://store.steampowered.com/public/captcha.php?gid={}'
-                                       .format(gid)).content
+                                      .format(gid)).content
             resp = requests.post('http://rucaptcha.com/in.php',
                                  files={'file': ('captcha', captcha_img, 'image/png')},
                                  data={'key': rucaptcha_api_key})
@@ -244,11 +245,23 @@ class SteamRegger:
             captcha_id = resp.text.partition('|')[2]
             return captcha_id, gid
 
+        def send_captcha(captchagid, captcha_text, email):
+            data = {
+                'captchagid': captchagid,
+                'captcha_text': captcha_text,
+                'email': email,
+                'count': '1'
+            }
+            resp = self.handle_request(session, 'https://store.steampowered.com/join/verifycaptcha',
+                                       data=data)
+            logger.info(resp)
+            return resp
+
         def resolve_captcha(captcha_id, gid):
             while True:
                 time.sleep(10)
                 r = requests.post('http://rucaptcha.com/res.php?key={}&action=get&id={}'
-                                   .format(rucaptcha_api_key, captcha_id))
+                                  .format(rucaptcha_api_key, captcha_id))
                 logger.info(r.text)
                 if 'CAPCHA_NOT_READY' in r.text:
                     continue
@@ -272,8 +285,8 @@ class SteamRegger:
         if self.proxy:
             session.proxies.update(self.proxy)
         session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
-            'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
+                                'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
+                                'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
         char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
         while True:
@@ -283,38 +296,73 @@ class SteamRegger:
                 continue
             login_name = generate_login_name()
             password = generate_credential(2, 4)
-            if '@' not in email:
-                email_domain = email
-                if not email_domain:
-                    email_domain = generate_credential(2, 4) + '.xyz'
-                email = '%s@%s' % (login_name, email_domain)
-            self.email = email
-
-            data = {
-                'accountname': login_name,
-                'password': password,
-                'email': email,
-                'captchagid': gid,
-                'captcha_text': captcha_text,
-                'i_agree': '1',
-                'ticket': '',
-                'count': '32',
-                'lt': '0'
-            }
-            resp = self.handle_request(session, 'https://store.steampowered.com/join/createaccount/',
-                                       data=data, timeout=25)
-            if resp['bSuccess']:
-                break
+            with thread_lock:
+                self.email, tm_object = self.generate_mailbox()
+            logger.info("Email box: %s", self.email)
+            logger.info("Resolving captcha... %s", login_name)
+            resp = send_captcha(gid, captcha_text, self.email)
+            if not resp['bCaptchaMatches']:
+                logger.info("Captcha text is wrong: %s", captcha_text)
+                requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
+                              .format(rucaptcha_api_key, captcha_id))
+            elif not resp['bEmailAvail']:
+                logger.info("Email box is already used: %s", self.email)
             else:
-                if not resp.get('details', None):
-                    logger.error('Response: %s', resp)
-                    continue
-                logger.error('Captcha text: %s. Captcha gid: %s. Response: %s',
-                             captcha_text, gid, resp)
-                r = requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
-                                   .format(rucaptcha_api_key, captcha_id))
+                break
+
+        logger.info("Confirming email... %s", login_name)
+        with thread_lock:
+            creationid = self.confirm_email(tm_object, self.email, login_name)
+        logger.info("Email confirmed: %s %s", self.email, login_name)
+
+        data = {
+            'accountname': login_name,
+            'password': password,
+            'email': self.email,
+            'captchagid': gid,
+            'captcha_text': captcha_text,
+            'i_agree': '1',
+            'ticket': '',
+            'count': '32',
+            'lt': '0',
+            'creation_sessionid': creationid
+        }
+        resp = self.handle_request(session, 'https://store.steampowered.com/join/createaccount/',
+                                   data=data, timeout=25)
+        logger.info('create account response: %s', resp)
 
         return login_name, password
+
+    @staticmethod
+    def generate_mailbox():
+        resp = requests.get('https://temp-mail.ru/option/change')
+        available_domains = re.findall(r'<option value=".+">(.+)</option>', resp.text)
+        domain = random.choice(available_domains)
+        tm = TempMail(domain=domain)
+        mailbox = tm.generate_login() + domain
+        return mailbox, tm
+
+    @staticmethod
+    def confirm_email(tm_object, mailbox, login_name):
+        resp = requests.get('https://store.steampowered.com/join/ajaxverifyemail',
+                            params={'accountname': login_name, 'email': mailbox}).json()
+        logger.info("ajax verify email response: %s", resp)
+        creationid = resp['sessionid']
+        attempts = 0
+        while attempts < 8:
+            time.sleep(3)
+            try:
+                resp = tm_object.get_mailbox(mailbox)[0]
+                break
+            except KeyError as err:
+                logger.info("Waiting for the email... %s", mailbox)
+            attempts += 1
+
+        verification_link = re.search(r'https:\/\/steamcommunity.com.+creationid=\d+', resp['mail_text_only']).group()
+        requests.get(verification_link)
+        requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'])
+
+        return creationid
 
     @staticmethod
     def activate_account(steam_client):

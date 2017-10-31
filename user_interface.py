@@ -28,7 +28,6 @@ for module_name, module in required_modules.items():
         os.system('pip install %s' % module)
 
 import requests
-from tempmail import TempMail
 
 from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
@@ -58,6 +57,7 @@ sys.excepthook = uncaught_exceptions_handler
 steamreg = SteamRegger()
 with open("interface_states.json", "r") as f:
     STATES = json.load(f)
+
 
 class MainWindow:
 
@@ -429,7 +429,7 @@ class MainWindow:
         logger.info(resp.text)
         if 'ERROR_ZERO_BALANCE' in resp.text:
             raise RuCaptchaError('На счету нулевой баланс')
-        elif 'ERROR_WRONG_USER_KEY' in resp.text:
+        elif 'ERROR_WRONG_USER_KEY' in resp.text or 'ERROR_KEY_DOES_NOT_EXIST' in resp.text:
             raise RuCaptchaError('Неправильно введен API ключ')
 
     @staticmethod
@@ -516,6 +516,7 @@ class MainWindow:
 
         self.parent.destroy()
 
+
 class RegistrationThread(threading.Thread):
 
     counter = 0
@@ -541,13 +542,8 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
-        if self.window.temp_mail.get():
-            with RegistrationThread.lock:
-                mailbox, tm_object = self.generate_mailbox()
-        else:
-            mailbox = self.window.email_domain.get()
-        logger.info("Email box: %s", mailbox)
-        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(), mailbox)
+        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(),
+                                                thread_lock=RegistrationThread.email_lock)
         logger.info('Аккаунт: %s:%s', login, passwd)
         self.window.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
         with RegistrationThread.lock:
@@ -557,19 +553,13 @@ class RegistrationThread(threading.Thread):
         while True:
             try:
                 with RegistrationThread.lock:
+                    time.sleep(3)
                     steam_client.login(login, passwd)
                 break
             except AttributeError as err:
                 logger.error(err)
                 time.sleep(3)
-        logger.info("Подтверждаю почту...")
-        if self.window.temp_mail.get():
-            self.window.add_log("Подтверждаю почту, жду письмо: " + login)
-            logger.info("Подтверждаю почту, жду письмо: " + login)
-            with RegistrationThread.email_lock:
-                self.confirm_email(steam_client, tm_object, mailbox)
-            self.window.add_log("Почта успешно подтверждена: " + login)
-            logger.info("Почта успешно подтверждена: " + login)
+
         steamreg.activate_account(steam_client)
         steamreg.remove_intentory_privacy(steam_client)
         if self.result is not None:
@@ -579,47 +569,6 @@ class RegistrationThread(threading.Thread):
         with open('непривязанные_аккаунты.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
-    @staticmethod
-    def generate_mailbox():
-        resp = requests.get('https://temp-mail.ru/option/change')
-        available_domains = re.findall(r'<option value=".+">(.+)</option>', resp.text)
-        domain = random.choice(available_domains)
-        tm = TempMail(domain=domain)
-        mailbox = tm.generate_login() + domain
-        return mailbox, tm
-
-    @staticmethod
-    def confirm_email(steam_client, tm_object, mailbox):
-        steam_client.session.get('http://store.steampowered.com')  # get store cookies
-        data = {
-            'snr': '1_5_9__403',
-            'action': 'add_to_cart',
-            'sessionid': steam_client.session.cookies.get('sessionid', domain='store.steampowered.com'),
-            'subid': '54029'
-        }
-        steam_client.session.post('http://store.steampowered.com/cart/', data=data)
-        success = False
-        while True:
-            steam_client.session.get('https://store.steampowered.com/checkout/?purchasetype=gift')
-            attempts = 0
-            while attempts < 8:
-                time.sleep(3)
-                try:
-                    resp = tm_object.get_mailbox(mailbox)[0]
-                    success = True
-                    break
-                except KeyError as err:
-                    logger.info("Waiting for the email... %s", steam_client.login_name)
-                attempts += 1
-
-            if success:
-                break
-            logger.info("No success in getting the email, trying again... Response: %s",
-                        tm_object.get_mailbox(mailbox))
-
-        link = re.search(r'https:.+validateemail.+(?=")', resp['mail_text_only']).group()
-        steam_client.session.get(link)
-        requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'])
 
 class Binder:
 
