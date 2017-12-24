@@ -2,15 +2,12 @@ from tkinter import *
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
 import logging
-import urllib
 import os
 import sys
-import random
 import datetime
 import uuid
 import json
 import time
-import queue
 import traceback
 import threading
 
@@ -31,8 +28,11 @@ import requests
 
 from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
-from steamreg import *
 from sms_services import *
+from steamreg import *
+
+
+logger = logging.getLogger('__main__')
 
 for dir_name in ('новые_аккаунты', 'загруженные_аккаунты'):
     if not os.path.exists(dir_name):
@@ -42,16 +42,10 @@ if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
 
-logging.getLogger("requests").setLevel(logging.ERROR)
-logger = logging.getLogger(__name__)
-formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
 
 def uncaught_exceptions_handler(type, value, tb):
     logger.critical("Uncaught exception: {0} {1}\n{2}".format(type, value, traceback.format_tb(tb)))
+
 
 sys.excepthook = uncaught_exceptions_handler
 steamreg = SteamRegger()
@@ -350,7 +344,7 @@ class MainWindow:
             if remainder < accounts_per_number:
                 accounts_per_number = remainder
             for _ in range(accounts_per_number):
-                t = RegistrationThread(self, accounts_per_number, new_accounts)  # transfer main window object
+                t = RegistrationThread(self, accounts_per_number, new_accounts)
                 t.start()
                 threads.append(t)
                 ctr += 1
@@ -705,6 +699,7 @@ class Binder:
         def insert_log(text):
             self.window.add_log('%s (%s)' % (text, login))
         return insert_log
+
 
 root = Tk()
 window = MainWindow(root)
