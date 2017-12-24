@@ -27,7 +27,7 @@ class SteamRegger:
         self.email = None
 
     @staticmethod
-    def handle_request(session, url, data={}, timeout=5):
+    def handle_request(session, url, data={}, timeout=30):
         while True:
             try:
                 resp = session.post(url, data=data, timeout=timeout).json()
@@ -235,12 +235,13 @@ class SteamRegger:
 
         def generate_captcha():
             gid = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1',
-                               headers={'Host': 'store.steampowered.com'}).json()['gid']
+                               headers={'Host': 'store.steampowered.com'}, timeout=10).json()['gid']
             captcha_img = session.get('https://store.steampowered.com/public/captcha.php?gid={}'
-                                      .format(gid)).content
+                                      .format(gid), timeout=30).content
             resp = requests.post('http://rucaptcha.com/in.php',
                                  files={'file': ('captcha', captcha_img, 'image/png')},
-                                 data={'key': rucaptcha_api_key})
+                                 data={'key': rucaptcha_api_key},
+                                 timeout=30)
 
             captcha_id = resp.text.partition('|')[2]
             return captcha_id, gid
@@ -258,10 +259,11 @@ class SteamRegger:
             return resp
 
         def resolve_captcha(captcha_id, gid):
+            attempts = 10
             while True:
                 time.sleep(10)
                 r = requests.post('http://rucaptcha.com/res.php?key={}&action=get&id={}'
-                                  .format(rucaptcha_api_key, captcha_id))
+                                  .format(rucaptcha_api_key, captcha_id), timeout=30)
                 logger.info(r.text)
                 if 'CAPCHA_NOT_READY' in r.text:
                     continue
@@ -281,6 +283,7 @@ class SteamRegger:
                     return login_name
                 time.sleep(3)
 
+        logger.info("Hello!")
         session = requests.Session()
         if self.proxy:
             session.proxies.update(self.proxy)
@@ -304,7 +307,7 @@ class SteamRegger:
             if not resp['bCaptchaMatches']:
                 logger.info("Captcha text is wrong: %s", captcha_text)
                 requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
-                              .format(rucaptcha_api_key, captcha_id))
+                              .format(rucaptcha_api_key, captcha_id), timeout=30)
             elif not resp['bEmailAvail']:
                 logger.info("Email box is already used: %s", self.email)
             else:
@@ -312,7 +315,7 @@ class SteamRegger:
 
         logger.info("Confirming email... %s", login_name)
         with thread_lock:
-            creationid = self.confirm_email(tm_object, self.email, login_name)
+            creationid = self.confirm_email(tm_object, self.email, login_name, gid, captcha_text)
         logger.info("Email confirmed: %s %s", self.email, login_name)
 
         data = {
@@ -335,7 +338,7 @@ class SteamRegger:
 
     @staticmethod
     def generate_mailbox():
-        resp = requests.get('https://temp-mail.ru/option/change')
+        resp = requests.get('https://temp-mail.ru/option/change', timeout=30)
         available_domains = re.findall(r'<option value=".+">(.+)</option>', resp.text)
         domain = random.choice(available_domains)
         tm = TempMail(domain=domain)
@@ -343,9 +346,15 @@ class SteamRegger:
         return mailbox, tm
 
     @staticmethod
-    def confirm_email(tm_object, mailbox, login_name):
+    def confirm_email(tm_object, mailbox, login_name, captchagid, captca_text):
+        params = {
+            'accountname': login_name,
+            'email': mailbox,
+            'captchagid': captchagid,
+            'captcha_text': captca_text
+        }
         resp = requests.get('https://store.steampowered.com/join/ajaxverifyemail',
-                            params={'accountname': login_name, 'email': mailbox}).json()
+                            params=params, timeout=30).json()
         logger.info("ajax verify email response: %s", resp)
         creationid = resp['sessionid']
         attempts = 0
@@ -358,9 +367,9 @@ class SteamRegger:
                 logger.info("Waiting for the email... %s", mailbox)
             attempts += 1
 
-        verification_link = re.search(r'https:\/\/steamcommunity.com.+creationid=\d+', resp['mail_text_only']).group()
-        requests.get(verification_link)
-        requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'])
+        verification_link = re.search(r'https:\/\/store.steampowered.com.+creationid=\d+', resp['mail_text_only']).group()
+        requests.get(verification_link, timeout=30)
+        requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'], timeout=30)
 
         return creationid
 
@@ -374,7 +383,7 @@ class SteamRegger:
             'summary': 'No information given.',
             'primary_group_steamid': '0'
         }
-        steam_client.session.post(url, data=data)
+        steam_client.session.post(url, data=data, timeout=30)
 
     @staticmethod
     def remove_intentory_privacy(steam_client):
@@ -387,18 +396,19 @@ class SteamRegger:
             'inventoryPrivacySetting': '3',
             'inventoryGiftPrivacy': '1',
         }
-        steam_client.session.post(url, data=data)
+        steam_client.session.post(url, data=data, timeout=30)
 
     @staticmethod
     def fetch_tradeoffer_link(steam_client):
         url = 'http://steamcommunity.com/profiles/%s/tradeoffers/privacy' % steam_client.steamid
-        resp = steam_client.session.get(url)
+        resp = steam_client.session.get(url, timeout=30)
         regexr = 'https:\/\/steamcommunity.com\/tradeoffer\/new\/\?partner=.+&token=.+(?=" )'
         try:
             return re.search(regexr, resp.text).group()
         except AttributeError as err:
             logger.error("Failed to fetch offer link %s", err)
             return ''
+
 
 if __name__ == '__main__':
     foo = SteamRegger()
