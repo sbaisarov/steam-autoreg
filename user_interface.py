@@ -358,7 +358,6 @@ class MainWindow:
             yield new_accounts
 
     def authorize_user(self):
-        key = ''
         if os.path.exists('database/key.txt'):
             with open('database/key.txt', 'r') as f:
                 user_data = json.load(f)

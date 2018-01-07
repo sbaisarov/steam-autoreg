@@ -91,7 +91,7 @@ class SteamRegger:
         }
         is_valid_number = True
         response = self.handle_request(steam_client.session,
-            'https://steamcommunity.com/steamguard/phoneajax', data=data)
+                                       'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(str(response))
         return response
 
