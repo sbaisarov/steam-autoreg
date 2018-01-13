@@ -11,25 +11,16 @@ import time
 import traceback
 import threading
 
-from pkgutil import iter_modules
-
-installed_modules = [item[1] for item in iter_modules()]
-required_modules = {
-    'bs4': 'bs4',
-    'rsa': 'rsa',
-    'requests': 'https://github.com/Shamanovski/requests/archive/master.zip',
-    'tempmail': 'https://github.com/Shamanovski/temp-mail/archive/master.zip'
-}
-for module_name, module in required_modules.items():
-    if module_name not in installed_modules:
-        os.system('pip install %s' % module)
-
 import requests
 
 from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
 from sms_services import *
 from steamreg import *
+
+
+def uncaught_exceptions_handler(type, value, tb):
+    logger.critical("Uncaught exception: {0} {1}\n{2}".format(type, value, ''.join(traceback.format_tb(tb))))
 
 
 logger = logging.getLogger('__main__')
@@ -41,11 +32,6 @@ for dir_name in ('новые_аккаунты', 'загруженные_акка
 if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
-
-
-def uncaught_exceptions_handler(type, value, tb):
-    logger.critical("Uncaught exception: {0} {1}\n{2}".format(type, value, traceback.format_tb(tb)))
-
 
 sys.excepthook = uncaught_exceptions_handler
 steamreg = SteamRegger()
@@ -84,6 +70,8 @@ class MainWindow:
         self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
         self.status_bar = StringVar()
+        self.reg_type = StringVar()
+        self.reg_type.set("web")
 
         self.menubar = Menu(parent)
         parent['menu'] = self.menubar
@@ -101,6 +89,9 @@ class MainWindow:
 
         self.email_domain_label = Label(self.frame, text='Домен для email (по усмотрению, без @):')
         self.email_domain_entry = Entry(self.frame, textvariable=self.email_domain, disabledforeground='#808080')
+        self.reg_type_label = Label(self.frame, text='Способ регистрации:')
+        self.client_option = Radiobutton(self.frame, text="Клиент", variable=self.reg_type, value="client")
+        self.web_option = Radiobutton(self.frame, text="Веб", variable=self.reg_type, value="web")
 
         tools_frame = Frame(self.parent)
         self.tools_label = Label(tools_frame, text='Инструменты:')
@@ -120,6 +111,7 @@ class MainWindow:
         self.fold_accounts_checkbutton = Checkbutton(tools_frame, text='Раскладывать по папкам',
                                                      variable=self.fold_accounts, disabledforeground='#808080')
 
+
         self.start_button = Button(tools_frame, text='Начать', command=self.start_process,
                                    bg='#CEC8C8', relief=GROOVE, width=50)
         tools_frame.grid(row=1, column=0, pady=5)
@@ -135,7 +127,7 @@ class MainWindow:
         self.scrollbar.bind('<Enter>', self.freeze_log)
         self.scrollbar.bind('<Leave>', self.unfreeze_log)
 
-        self.frame.grid(row=0, column=0)
+        self.frame.grid(row=0, column=0, sticky=W)
         log_frame.columnconfigure(0, weight=999)
         log_frame.columnconfigure(1, weight=1)
         log_frame.grid(row=2, column=0, sticky=NSEW)
@@ -196,8 +188,12 @@ class MainWindow:
         self.accounts_per_number_label.grid(row=3, column=0, pady=5, sticky=W)
         self.accounts_per_number_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
-        self.email_domain_label.grid(row=4, column=0, pady=5, sticky=W)
-        self.email_domain_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
+        self.reg_type_label.grid(row=4, column=0, pady=3, sticky=W)
+        self.web_option.grid(row=5, column=0, pady=3, sticky=W)
+        self.client_option.grid(row=5, column=1, pady=3, sticky=W)
+
+        # self.email_domain_label.grid(row=4, column=0, pady=5, sticky=W)
+        # self.email_domain_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
 
         self.tools_label.grid(row=0, column=0, pady=3, sticky=W)
         self.options_label.grid(row=2, column=0, pady=3, sticky=W)
@@ -297,22 +293,16 @@ class MainWindow:
                 self.userdata[field] = value
 
     def registrate_without_binding(self):
+        reg_type = self.reg_type.get()
         new_accounts_amount = self.new_accounts_amount.get()
-        self.status_bar.set('Создаю аккаунты, решаю капчи...')
-        threads = []
-        for _ in range(20):
-            t = RegistrationThread(self, new_accounts_amount)  # transfer main window object
-            t.start()
-            threads.append(t)
-
-        for thread in threads:
-            thread.join()
-            if thread.error:
-                error_origin, error_text = thread.error
-                showwarning("Ошибка %s" % error_origin, error_text)
-                return
-
-        RegistrationThread.counter = 0
+        if reg_type == 'web':
+            self.status_bar.set('Создаю аккаунты, решаю капчи...')
+            self.init_threads(new_accounts_amount)
+        else:
+            self.status_bar.set('Создаю аккаунты...')
+            result = steamreg.create_accounts_client(new_accounts_amount)
+            for login, passwd in result:
+                self.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
 
     def registrate_with_binding(self):
         onlinesim_api_key = self.onlinesim_api_key.get()
@@ -336,29 +326,39 @@ class MainWindow:
         ctr = 0
         new_accounts_amount = self.new_accounts_amount.get()
         accounts_per_number = self.accounts_per_number.get()
+        reg_type = self.reg_type.get()
         while ctr < new_accounts_amount:
-            self.status_bar.set('Создаю аккаунты, решаю капчи...')
-            new_accounts = []
-            threads = []
             remainder = new_accounts_amount - ctr
             if remainder < accounts_per_number:
                 accounts_per_number = remainder
-            for _ in range(accounts_per_number):
-                t = RegistrationThread(self, accounts_per_number, new_accounts)
-                t.start()
-                threads.append(t)
-                ctr += 1
-            for thread in threads:
-                thread.join()
-                if thread.error:
-                    error_origin, error_text = thread.error
-                    showwarning("Ошибка %s" % error_origin, error_text)
-                    return
-            RegistrationThread.counter = 0
+            if reg_type == 'web':
+                self.status_bar.set('Создаю аккаунты, решаю капчи...')
+                new_accounts = self.init_threads(accounts_per_number, accounts_per_number)
+            elif reg_type == 'client':
+                self.status_bar.set('Создаю аккаунты...')
+                new_accounts = steamreg.create_accounts_client(accounts_per_number)
+                for login, passwd in new_accounts:
+                    self.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
+            ctr += accounts_per_number
             yield new_accounts
 
+    def init_threads(self, accs_amount, threads_amount=20):
+        threads = []
+        new_accounts = []
+        for _ in range(threads_amount):
+            t = RegistrationThread(self, accs_amount, new_accounts)
+            t.start()
+            threads.append(t)
+        for thread in threads:
+            thread.join()
+            if thread.error:
+                error_origin, error_text = thread.error
+                showwarning("Ошибка %s" % error_origin, error_text)
+                return
+        RegistrationThread.counter = 0
+        return new_accounts
+
     def authorize_user(self):
-        key = ''
         if os.path.exists('database/key.txt'):
             with open('database/key.txt', 'r') as f:
                 user_data = json.load(f)
@@ -536,10 +536,11 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
-        login, passwd = steamreg.create_account(self.window.rucaptcha_api_key.get().strip(),
-                                                thread_lock=RegistrationThread.email_lock)
+        login, passwd = steamreg.create_account_web(self.window.rucaptcha_api_key.get().strip(),
+                                                    thread_lock=RegistrationThread.email_lock)
         logger.info('Аккаунт: %s:%s', login, passwd)
         self.window.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
+
         with RegistrationThread.lock:
             if not self.window.mobile_bind.get():
                 self.save_unattached_account(login, passwd)
