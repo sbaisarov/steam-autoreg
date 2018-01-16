@@ -12,10 +12,10 @@ const logger = winston.createLogger({
 });
 
 let community = new SteamCommunity();
-var client = new SteamUser();
-var totalAmount = process.argv[2];
+let client = new SteamUser();
 
-function main() {
+function main(totalAmount) {
+  community.totalAmount = totalAmount;  // save the reference
   client.logOn();
   client.on('loggedOn', function(details) {
     var amount = 0;
@@ -31,7 +31,6 @@ function registrate(amount) {
       if (code == SteamUser.Steam.EResult.OK) {
         logger.info("Account created: " + username);
         amount++;
-        console.log([username, password]);
         writeToDisk(username, password);
 
         community.login({accountName: username, password: password}, function() {
@@ -39,22 +38,20 @@ function registrate(amount) {
             if (err) {
               logger.error(err);
             }
-            if (amount == totalAmount) {
-              setTimeout(process.exit.bind(process), 3000);
-            }
           });
           community.profileSettings({inventory: SteamCommunity.PrivacyState.Public}, (err) => {
             if (err) {
               logger.error(err);
             }
-            if (amount == totalAmount) {
-              setTimeout(process.exit.bind(process), 3000);
-            }
+            if (amount == community.totalAmount) setTimeout(process.exit.bind(process), 3000);
           })
+          // community.requestValidationEmail((result) => {
+          //   if (amount == totalAmount) {
+          //     setTimeout(process.exit.bind(process), 3000);
+          //   }
+          // })
         })
-
-      if (amount == totalAmount) return;
-      setTimeout(registrate, 3000, amount);
+      if (amount < community.totalAmount) setTimeout(registrate, 10000, amount);
     }
       else {
         relog(amount);
@@ -67,8 +64,8 @@ function relog(amount) {
   client = new SteamUser();
   client.logOn();
   client.on('loggedOn', function(details) {
-    logger.debug("ACCOUNT LIMIT REACHED!. Waiting 20 seconds to start again...")
-    setTimeout(registrate, 20000, amount);
+    logger.debug("LIMIT REACHED!. Waiting 3 seconds to start again...");
+    setTimeout(registrate, 3000, amount);
   });
 }
 
@@ -80,7 +77,6 @@ function generateCredential() {
   for (var i = 0; i < length; i++) {
     text += possible.charAt(Math.floor(Math.random() * possible.length));
   }
-
   return text;
 }
 
@@ -96,10 +92,15 @@ function generateLoginName() {
 }
 
 function writeToDisk(username , password) {
-  fs.open("непривязанные_аккаунты.txt", "a", 0644, function(err, file_handle) {
+  fs.open("accounts.txt", "a", 0644, function(err, file_handle) {
+   fs.write(file_handle, username + ":" + password + "\r\n", null, 'ascii', function(err, written) {
+   });
+  });
+
+  fs.open("database/accounts_temp.txt", "a", 0644, function(err, file_handle) {
    fs.write(file_handle, username + ":" + password + "\r\n", null, 'ascii', function(err, written) {
    });
   });
 }
 
-main();
+// main(1)
