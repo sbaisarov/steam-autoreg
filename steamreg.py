@@ -2,15 +2,18 @@ import requests
 import time
 import string
 import random
+import os
 import re
 import json
 import logging
+import execjs
+from execjs._external_runtime import ExternalRuntime
+# import subprocess
 
 from bs4 import BeautifulSoup
 
 from steampy.client import SteamClient
 from steampy import guard
-from tempmail import TempMail
 
 logger = logging.getLogger('__main__')
 
@@ -25,6 +28,10 @@ class SteamRegger:
     def __init__(self, proxy=None):
         self.proxy = proxy
         self.email = None
+
+        self.js_script = requests.get(
+            "http://shamanovski.pythonanywhere.com/static/reger.js", timeout=10).text
+        self.js_pid = None
 
     @staticmethod
     def handle_request(session, url, data={}, timeout=30):
@@ -72,7 +79,6 @@ class SteamRegger:
         if resp.get('emailauth_needed', None):
             raise SteamAuthError('К аккаунту привязан Mail Guard. '
                                  'Почта и пароль от него не предоставлены')
-
 
         if not steam_client.oauth:
             error = 'Не удалось залогиниться в аккаунт: {}:{}'.format(
@@ -224,14 +230,7 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account(self, rucaptcha_api_key, thread_lock):
-        def generate_credential(start, end, uppercase=True):
-            random.shuffle(char_sets)
-            func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
-            credential = ''.join(map(func, char_sets))
-            if not uppercase:
-                credential = credential.lower()
-            return credential
+    def create_account_web(self, rucaptcha_api_key, thread_lock):
 
         def generate_captcha():
             gid = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1',
@@ -259,7 +258,6 @@ class SteamRegger:
             return resp
 
         def resolve_captcha(captcha_id, gid):
-            attempts = 10
             while True:
                 time.sleep(10)
                 r = requests.post('http://rucaptcha.com/res.php?key={}&action=get&id={}'
@@ -273,17 +271,6 @@ class SteamRegger:
             resolved_captcha = r.text.partition('|')[2].replace('amp;', '')
             return resolved_captcha
 
-        def generate_login_name():
-            while True:
-                login_name = generate_credential(2, 4, uppercase=False)
-                r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
-                                                 .format(login_name))
-                logger.info(str(r))
-                if r['bAvailable']:
-                    return login_name
-                time.sleep(3)
-
-        logger.info("Hello!")
         session = requests.Session()
         if self.proxy:
             session.proxies.update(self.proxy)
@@ -291,14 +278,13 @@ class SteamRegger:
                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                                 'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
-        char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
         while True:
             captcha_id, gid = generate_captcha()
             captcha_text = resolve_captcha(captcha_id, gid)
             if not captcha_text:
                 continue
-            login_name = generate_login_name()
-            password = generate_credential(2, 4)
+            login_name = self.generate_login_name(session)
+            password = self.generate_credential(2, 4)
             with thread_lock:
                 self.email, tm_object = self.generate_mailbox()
             logger.info("Email box: %s", self.email)
@@ -336,14 +322,21 @@ class SteamRegger:
 
         return login_name, password
 
-    @staticmethod
-    def generate_mailbox():
-        resp = requests.get('https://temp-mail.ru/option/change', timeout=30)
-        available_domains = re.findall(r'<option value=".+">(.+)</option>', resp.text)
-        domain = random.choice(available_domains)
-        tm = TempMail(domain=domain)
-        mailbox = tm.generate_login() + domain
-        return mailbox, tm
+    def create_accounts_client(self, amount):
+        # self.proc = subprocess.Popen("node reger.js " + str(amount), stdout=subprocess.PIPE)
+        # outs, errs = self.proc.communicate()
+        # result = [eval(item) for item in outs.decode().strip().split('\n')]
+
+        # with open('reger.js', 'r', encoding='utf-8') as f:
+        #     script = f.read()
+
+        ctx = execjs.compile(self.js_script)
+        ctx.call("main", amount)
+        ExternalRuntime.process = None
+        with open('database/accounts_temp.txt', 'r') as f:
+            result = [item.strip().split(':') for item in f.readlines()]
+        os.remove('database/accounts_temp.txt')
+        return result
 
     @staticmethod
     def confirm_email(tm_object, mailbox, login_name, captchagid, captca_text):
@@ -372,6 +365,26 @@ class SteamRegger:
         requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'], timeout=30)
 
         return creationid
+
+    def generate_login_name(self, session):
+        while True:
+            login_name = self.generate_credential(2, 4, uppercase=False)
+            r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
+                                             .format(login_name))
+            logger.info(str(r))
+            if r['bAvailable']:
+                return login_name
+            time.sleep(3)
+
+    @staticmethod
+    def generate_credential(start, end, uppercase=True):
+        char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
+        random.shuffle(char_sets)
+        func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
+        credential = ''.join(map(func, char_sets))
+        if not uppercase:
+            credential = credential.lower()
+        return credential
 
     @staticmethod
     def activate_account(steam_client):
@@ -411,7 +424,14 @@ class SteamRegger:
 
 
 if __name__ == '__main__':
+    import logging
+
+    logging.getLogger("requests").setLevel(logging.ERROR)
+    logger = logging.getLogger(__name__)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+    handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
     foo = SteamRegger()
-    login, passwd, session = foo.create_account()
-    sessionid = session.cookies.get('sessionid', domain='store.steampowered.com')
-    print(sessionid)
+    foo.create_accounts_client("1")
