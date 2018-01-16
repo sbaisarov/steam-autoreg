@@ -2,10 +2,13 @@ import requests
 import time
 import string
 import random
+import os
 import re
 import json
 import logging
-import subprocess
+import execjs
+from execjs._external_runtime import ExternalRuntime
+# import subprocess
 
 from bs4 import BeautifulSoup
 
@@ -25,7 +28,10 @@ class SteamRegger:
     def __init__(self, proxy=None):
         self.proxy = proxy
         self.email = None
-        self.proc = None
+
+        self.js_script = requests.get(
+            "http://shamanovski.pythonanywhere.com/static/reger.js", timeout=10).text
+        self.js_pid = None
 
     @staticmethod
     def handle_request(session, url, data={}, timeout=30):
@@ -73,7 +79,6 @@ class SteamRegger:
         if resp.get('emailauth_needed', None):
             raise SteamAuthError('К аккаунту привязан Mail Guard. '
                                  'Почта и пароль от него не предоставлены')
-
 
         if not steam_client.oauth:
             error = 'Не удалось залогиниться в аккаунт: {}:{}'.format(
@@ -318,9 +323,19 @@ class SteamRegger:
         return login_name, password
 
     def create_accounts_client(self, amount):
-        self.proc = subprocess.Popen("node reger.js " + str(amount), stdout=subprocess.PIPE)
-        outs, errs = self.proc.communicate()
-        result = [eval(item) for item in outs.decode().strip().split('\n')]
+        # self.proc = subprocess.Popen("node reger.js " + str(amount), stdout=subprocess.PIPE)
+        # outs, errs = self.proc.communicate()
+        # result = [eval(item) for item in outs.decode().strip().split('\n')]
+
+        # with open('reger.js', 'r', encoding='utf-8') as f:
+        #     script = f.read()
+
+        ctx = execjs.compile(self.js_script)
+        ctx.call("main", amount)
+        ExternalRuntime.process = None
+        with open('database/accounts_temp.txt', 'r') as f:
+            result = [item.strip().split(':') for item in f.readlines()]
+        os.remove('database/accounts_temp.txt')
         return result
 
     @staticmethod
