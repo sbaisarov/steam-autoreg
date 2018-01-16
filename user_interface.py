@@ -1,3 +1,5 @@
+# TODO: remove warning while quitting the app
+
 from tkinter import *
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
@@ -12,6 +14,7 @@ import traceback
 import threading
 
 import requests
+from execjs._external_runtime import ExternalRuntime
 
 from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
@@ -35,7 +38,7 @@ if not os.path.exists('database/userdata.txt'):
 
 sys.excepthook = uncaught_exceptions_handler
 steamreg = SteamRegger()
-with open("interface_states.json", "r") as f:
+with open("database/interface_states.json", "r") as f:
     STATES = json.load(f)
 
 
@@ -71,7 +74,7 @@ class MainWindow:
         self.email_domain = StringVar()
         self.status_bar = StringVar()
         self.reg_type = StringVar()
-        self.reg_type.set("web")
+        self.reg_type.set("client")
 
         self.menubar = Menu(parent)
         parent['menu'] = self.menubar
@@ -173,7 +176,7 @@ class MainWindow:
         self.load_menu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Загрузить...", menu=self.load_menu)
         self.load_menu.add_command(label="Свои аккаунты", command=self.accounts_open)
-        # self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
+        self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
         self.load_menu.add_command(label="SDA Manifest", command=self.manifest_open)
 
         self.onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
@@ -190,7 +193,7 @@ class MainWindow:
 
         self.reg_type_label.grid(row=4, column=0, pady=3, sticky=W)
         self.web_option.grid(row=5, column=0, pady=3, sticky=W)
-        self.client_option.grid(row=5, column=1, pady=3, sticky=W)
+        self.client_option.grid(row=5, column=0, pady=3, sticky=E)
 
         # self.email_domain_label.grid(row=4, column=0, pady=5, sticky=W)
         # self.email_domain_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
@@ -251,16 +254,13 @@ class MainWindow:
                         parent=self.parent)
             return False
 
-        if not self.rucaptcha_api_key.get() and self.autoreg.get():
-            showwarning("Ошибка", "Не указан api ключ RuCaptcha")
-            return False
-
         if self.autoreg.get():
-            try:
-                self.check_rucaptcha_key()
-            except RuCaptchaError as err:
-                showwarning("Ошибка RuCaptcha", err, parent=self.parent)
-                return False
+            if self.reg_type == 'web':
+                try:
+                    self.check_rucaptcha_key()
+                except RuCaptchaError as err:
+                    showwarning("Ошибка RuCaptcha", err, parent=self.parent)
+                    return False
             try:
                 if self.new_accounts_amount.get() <= 0:
                     raise ValueError
@@ -296,13 +296,9 @@ class MainWindow:
         reg_type = self.reg_type.get()
         new_accounts_amount = self.new_accounts_amount.get()
         if reg_type == 'web':
-            self.status_bar.set('Создаю аккаунты, решаю капчи...')
             self.init_threads(new_accounts_amount)
         else:
-            self.status_bar.set('Создаю аккаунты...')
-            result = steamreg.create_accounts_client(new_accounts_amount)
-            for login, passwd in result:
-                self.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
+            self.registrate_client(new_accounts_amount)
 
     def registrate_with_binding(self):
         onlinesim_api_key = self.onlinesim_api_key.get()
@@ -332,17 +328,14 @@ class MainWindow:
             if remainder < accounts_per_number:
                 accounts_per_number = remainder
             if reg_type == 'web':
-                self.status_bar.set('Создаю аккаунты, решаю капчи...')
-                new_accounts = self.init_threads(accounts_per_number, accounts_per_number)
+                new_accounts = self.init_threads(accounts_per_number, threads_amount=accounts_per_number)
             elif reg_type == 'client':
-                self.status_bar.set('Создаю аккаунты...')
-                new_accounts = steamreg.create_accounts_client(accounts_per_number)
-                for login, passwd in new_accounts:
-                    self.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
+                new_accounts = self.registrate_client(accounts_per_number)
             ctr += accounts_per_number
             yield new_accounts
 
     def init_threads(self, accs_amount, threads_amount=20):
+        self.status_bar.set('Создаю аккаунты, решаю капчи...')
         threads = []
         new_accounts = []
         for _ in range(threads_amount):
@@ -357,6 +350,13 @@ class MainWindow:
                 return
         RegistrationThread.counter = 0
         return new_accounts
+
+    def registrate_client(self, amount):
+        self.status_bar.set('Создаю аккаунты...')
+        result = steamreg.create_accounts_client(amount)
+        for login, passwd in result:
+            self.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
+        return result
 
     def authorize_user(self):
         if os.path.exists('database/key.txt'):
@@ -417,6 +417,10 @@ class MainWindow:
         frame.grid(row=0, column=0)
 
     def check_rucaptcha_key(self):
+        if not self.rucaptcha_api_key.get():
+            raise RuCaptchaError('"Не указан api ключ RuCaptcha"')
+            return
+
         resp = requests.post('http://rucaptcha.com/res.php',
                              data={'key': self.rucaptcha_api_key.get().strip(),
                                    'action': 'getbalance'})
@@ -508,6 +512,12 @@ class MainWindow:
         with open('database/userdata.txt', 'w') as f:
             json.dump(self.userdata, f)
 
+        try:
+            if ExternalRuntime.process is not None:
+                ExternalRuntime.process.kill()
+        except:
+            showwarning('Внимание!',
+                        'Для корректной работы программы введите в cmd.exe команду: pip uninstall pyexecjs')
         self.parent.destroy()
 
 
@@ -561,7 +571,7 @@ class RegistrationThread(threading.Thread):
             self.result.append((login, passwd))
 
     def save_unattached_account(self, login, passwd):
-        with open('непривязанные_аккаунты.txt', 'a+') as f:
+        with open('accounts.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
 
@@ -677,7 +687,7 @@ class Binder:
             f.write('{login}:{passwd}\nДата привязки Guard: {binding_date}\nНомер: {number}\n'
                     'SteamID: {steamid}\nEmail: {email}\nRCODE: {revocation_code}\nТрейд ссылка: {offer_link}'.format(**locals()))
 
-        with open('привязанные_аккаунты.txt', 'a+') as f:
+        with open('accounts_guard.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 
         if self.window.import_mafile.get():
@@ -705,6 +715,6 @@ class Binder:
 root = Tk()
 window = MainWindow(root)
 root.iconbitmap('database/app.ico')
-root.title('Steam Auto Authenticator v0.6')
+root.title('Steam Auto Authenticator v0.71')
 root.protocol("WM_DELETE_WINDOW", window.app_quit)
 root.mainloop()
