@@ -8,7 +8,7 @@ import json
 import logging
 import execjs
 from execjs._external_runtime import ExternalRuntime
-# import subprocess
+from websocket import create_connection
 
 from bs4 import BeautifulSoup
 
@@ -27,7 +27,6 @@ class SteamRegger:
 
     def __init__(self, proxy=None):
         self.proxy = proxy
-        self.email = None
 
         self.js_script = requests.get(
             "http://shamanovski.pythonanywhere.com/static/reger.js", timeout=10).text
@@ -286,28 +285,28 @@ class SteamRegger:
             login_name = self.generate_login_name(session)
             password = self.generate_credential(2, 4)
             with thread_lock:
-                self.email, tm_object = self.generate_mailbox()
-            logger.info("Email box: %s", self.email)
+                email, ws = self.generate_mailbox()
+            logger.info("Email box: %s", email)
             logger.info("Resolving captcha... %s", login_name)
-            resp = send_captcha(gid, captcha_text, self.email)
+            resp = send_captcha(gid, captcha_text, email)
             if not resp['bCaptchaMatches']:
                 logger.info("Captcha text is wrong: %s", captcha_text)
                 requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
                               .format(rucaptcha_api_key, captcha_id), timeout=30)
             elif not resp['bEmailAvail']:
-                logger.info("Email box is already used: %s", self.email)
+                logger.info("Email box is already used: %s", email)
             else:
                 break
 
         logger.info("Confirming email... %s", login_name)
         with thread_lock:
-            creationid = self.confirm_email(tm_object, self.email, login_name, gid, captcha_text)
-        logger.info("Email confirmed: %s %s", self.email, login_name)
+            creationid = self.confirm_email(session, ws, login_name, gid, captcha_text, email)
+        logger.info("Email confirmed: %s %s", email, login_name)
 
         data = {
             'accountname': login_name,
             'password': password,
-            'email': self.email,
+            'email': email,
             'captchagid': gid,
             'captcha_text': captcha_text,
             'i_agree': '1',
@@ -320,7 +319,7 @@ class SteamRegger:
                                    data=data, timeout=25)
         logger.info('create account response: %s', resp)
 
-        return login_name, password
+        return login_name, password, email
 
     def create_accounts_client(self, amount):
         # self.proc = subprocess.Popen("node reger.js " + str(amount), stdout=subprocess.PIPE)
@@ -338,40 +337,44 @@ class SteamRegger:
         os.remove('database/accounts_temp.txt')
         return result
 
-    @staticmethod
-    def confirm_email(tm_object, mailbox, login_name, captchagid, captca_text):
-        params = {
-            'accountname': login_name,
-            'email': mailbox,
-            'captchagid': captchagid,
-            'captcha_text': captca_text
-        }
-        resp = requests.get('https://store.steampowered.com/join/ajaxverifyemail',
-                            params=params, timeout=30).json()
-        logger.info("ajax verify email response: %s", resp)
-        creationid = resp['sessionid']
-        attempts = 0
-        while attempts < 8:
-            time.sleep(3)
-            try:
-                resp = tm_object.get_mailbox(mailbox)[0]
-                break
-            except KeyError as err:
-                logger.info("Waiting for the email... %s", mailbox)
-            attempts += 1
+    def generate_mailbox(self):
+        ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
+        ws = create_connection('wss://dropmail.me/websocket', sslopt=ssl_option)
+        mailbox = ws.recv().partition(':')[0].lstrip('A')
+        ws.recv()  # skip the message with domains
+        return mailbox, ws
 
-        verification_link = re.search(r'https:\/\/store.steampowered.com.+creationid=\d+', resp['mail_text_only']).group()
-        requests.get(verification_link, timeout=30)
-        requests.get('http://api.temp-mail.ru/request/delete/id/%s' % resp['mail_id'], timeout=30)
+    def confirm_email(self, session, websocket, login_name, gid, captcha_text, email):
+        data = {
+            'accountname': login_name,
+            'captcha_text': captcha_text,
+            'captchagid': gid,
+            'email': email
+        }
+        resp = self.handle_request(session, 'https://store.steampowered.com/join/ajaxverifyemail', data=data)
+        logger.info('ajaxverify response: %s', resp)
+        creationid = resp['sessionid']
+        response = websocket.recv()
+        try:
+            mail = json.loads(response.lstrip('I'))['text']
+        except Exception as err:
+            logger.error('Error: %ss\nResponse: %s\nMailbox: %s\nThread: %s', err, response, email, self.name)
+            sys.exit(1)
+        try:
+            link = re.search(r'(https:\/\/.+newaccountverification.+?)\n', mail).group(1)
+        except:
+            print(mail)
+            exit()
+        session.get(link)
 
         return creationid
 
     def generate_login_name(self, session):
         while True:
             login_name = self.generate_credential(2, 4, uppercase=False)
-            r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail/?accountname={}&count=1'
-                                             .format(login_name))
-            logger.info(str(r))
+            r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail',
+                                    data={'accountname': login_name, 'count': 1})
+            logger.info(str(r) + " %s", login_name)
             if r['bAvailable']:
                 return login_name
             time.sleep(3)

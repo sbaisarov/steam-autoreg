@@ -15,9 +15,14 @@ class OnlineSimApi:
         self.api_key = api_key
         self.used_codes = set()
 
-    def request_new_number(self):
+    def request_new_number(self, country='7'):
         url = 'http://onlinesim.ru/api/getNum.php'
-        data = {'service': 'Steam', 'apikey': self.api_key, 'form': '1'}
+        data = {
+            'service': 'Steam',
+            'apikey': self.api_key,
+            'form': '1',
+            'country': country
+        }
         resp = self._send_request(url, data)
         while True:
             try:
@@ -34,12 +39,15 @@ class OnlineSimApi:
     def get_number(self, tzid):
         url = 'http://onlinesim.ru/api/getState.php'
         data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
-        resp = self._send_request(url, data)
-        try:
-            number = resp[0]['number']
-        except (KeyError, IndexError):
-            raise OnlineSimError(resp['response'])
-        return number
+        while True:
+            resp = self._send_request(url, data)
+            try:
+                return resp[0]['number']
+            except (KeyError, IndexError):
+                if resp[0]['response'] == 'TZ_INPOOL':
+                    time.sleep(3)
+                    continue
+                raise OnlineSimError(resp['response'])
 
     def get_sms_code(self, tzid, is_repeated=False):
         attempts = 0

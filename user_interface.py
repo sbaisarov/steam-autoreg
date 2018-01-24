@@ -73,6 +73,8 @@ class MainWindow:
         self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
         self.status_bar = StringVar()
+        self.country_code = StringVar()
+        self.country_code.set('7')
         self.reg_type = StringVar()
         self.reg_type.set("client")
 
@@ -93,8 +95,12 @@ class MainWindow:
         self.email_domain_label = Label(self.frame, text='Домен для email (по усмотрению, без @):')
         self.email_domain_entry = Entry(self.frame, textvariable=self.email_domain, disabledforeground='#808080')
         self.reg_type_label = Label(self.frame, text='Способ регистрации:')
-        self.client_option = Radiobutton(self.frame, text="Клиент", variable=self.reg_type, value="client")
+        self.client_option = Radiobutton(self.frame, text="Клиент", variable=self.reg_type, value="client", state="disabled")
         self.web_option = Radiobutton(self.frame, text="Веб", variable=self.reg_type, value="web")
+
+        self.country_code_label = Label(self.frame, text='Страна номера:')
+        self.russia_option = Radiobutton(self.frame, text="Россия", variable=self.country_code, value="7")
+        self.china_option = Radiobutton(self.frame, text="Китай", variable=self.country_code, value="86")
 
         tools_frame = Frame(self.parent)
         self.tools_label = Label(tools_frame, text='Инструменты:')
@@ -193,7 +199,11 @@ class MainWindow:
 
         self.reg_type_label.grid(row=4, column=0, pady=3, sticky=W)
         self.web_option.grid(row=5, column=0, pady=3, sticky=W)
-        self.client_option.grid(row=5, column=0, pady=3, sticky=E)
+        self.client_option.grid(row=5, column=0, pady=3, sticky=EW)
+
+        self.country_code_label.grid(row=4, column=1, pady=3, sticky=W)
+        self.russia_option.grid(row=5, column=1, pady=3, sticky=W)
+        self.china_option.grid(row=5, column=1, pady=3, sticky=E)
 
         # self.email_domain_label.grid(row=4, column=0, pady=5, sticky=W)
         # self.email_domain_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
@@ -335,6 +345,8 @@ class MainWindow:
             yield new_accounts
 
     def init_threads(self, accs_amount, threads_amount=20):
+        if threads_amount > 20:
+            threads_amount = 20
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
         threads = []
         new_accounts = []
@@ -546,8 +558,8 @@ class RegistrationThread(threading.Thread):
                 return
 
     def registrate_account(self):
-        login, passwd = steamreg.create_account_web(self.window.rucaptcha_api_key.get().strip(),
-                                                    thread_lock=RegistrationThread.email_lock)
+        login, passwd, email = steamreg.create_account_web(self.window.rucaptcha_api_key.get().strip(),
+                                                           thread_lock=RegistrationThread.email_lock)
         logger.info('Аккаунт: %s:%s', login, passwd)
         self.window.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
 
@@ -568,7 +580,7 @@ class RegistrationThread(threading.Thread):
         steamreg.activate_account(steam_client)
         steamreg.remove_intentory_privacy(steam_client)
         if self.result is not None:
-            self.result.append((login, passwd))
+            self.result.append((login, passwd, email))
 
     def save_unattached_account(self, login, passwd):
         with open('accounts.txt', 'a+') as f:
@@ -587,6 +599,10 @@ class Binder:
         self.window.status_bar.set('Делаю привязку Mobile Guard...')
         for account_data in accounts_package:
             login, passwd = account_data[:2]
+            try:
+                email = account_data[2]
+            except IndexError:
+                email = ""
             logger.info('Аккаунт: %s:%s', login, passwd)
             insert_log = self.log_wrapper(login)
             insert_log('Номер: ' + number)
@@ -614,7 +630,7 @@ class Binder:
             steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
             mobguard_data['account_password'] = passwd
             offer_link = steamreg.fetch_tradeoffer_link(steam_client)
-            self.save_attached_account(mobguard_data, login, passwd, number, offer_link)
+            self.save_attached_account(mobguard_data, login, passwd, number, offer_link, email)
             if not self.window.autoreg.get():
                 steamreg.activate_account(steam_client)
                 steamreg.remove_intentory_privacy(steam_client)
@@ -663,11 +679,11 @@ class Binder:
             self.sms_service.set_operation_ok(tzid)
             self.sms_service.used_codes.clear()
         is_repeated = False
-        tzid = self.sms_service.request_new_number()
+        tzid = self.sms_service.request_new_number(country=self.window.country_code.get())
         number = self.sms_service.get_number(tzid)
         return tzid, number, is_repeated
 
-    def save_attached_account(self, mobguard_data, login, passwd, number, offer_link):
+    def save_attached_account(self, mobguard_data, login, passwd, number, offer_link, email):
         if self.window.mobile_bind.get():
             if self.window.autoreg.get():
                 accounts_dir = 'новые_аккаунты'
@@ -681,7 +697,6 @@ class Binder:
         txt_path = os.path.join(accounts_dir, login + '.txt')
         mafile_path = os.path.join(accounts_dir, login + '.maFile')
         binding_date = datetime.date.today()
-        email = steamreg.email
         revocation_code = mobguard_data['revocation_code']
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write('{login}:{passwd}\nДата привязки Guard: {binding_date}\nНомер: {number}\n'
@@ -715,6 +730,6 @@ class Binder:
 root = Tk()
 window = MainWindow(root)
 root.iconbitmap('database/app.ico')
-root.title('Steam Auto Authenticator v0.71')
+root.title('Steam Auto Authenticator v0.8')
 root.protocol("WM_DELETE_WINDOW", window.app_quit)
 root.mainloop()
