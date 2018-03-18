@@ -14,7 +14,6 @@ import traceback
 import threading
 
 import requests
-from execjs._external_runtime import ExternalRuntime
 
 from steampy.client import SteamClient
 from steampy.guard import generate_one_time_code
@@ -75,8 +74,6 @@ class MainWindow:
         self.status_bar = StringVar()
         self.country_code = StringVar()
         self.country_code.set('7')
-        self.reg_type = StringVar()
-        self.reg_type.set("client")
 
         self.menubar = Menu(parent)
         parent['menu'] = self.menubar
@@ -92,11 +89,6 @@ class MainWindow:
         self.rucaptcha_apikey_label = Label(self.frame, text='rucaptcha api key:')
         self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key, disabledforeground='#808080')
 
-        self.email_domain_label = Label(self.frame, text='Домен для email (по усмотрению, без @):')
-        self.email_domain_entry = Entry(self.frame, textvariable=self.email_domain, disabledforeground='#808080')
-        self.reg_type_label = Label(self.frame, text='Способ регистрации:')
-        self.client_option = Radiobutton(self.frame, text="Клиент", variable=self.reg_type, value="client", state="disabled")
-        self.web_option = Radiobutton(self.frame, text="Веб", variable=self.reg_type, value="web")
 
         self.country_code_label = Label(self.frame, text='Страна номера:')
         self.russia_option = Radiobutton(self.frame, text="Россия", variable=self.country_code, value="7")
@@ -197,22 +189,15 @@ class MainWindow:
         self.accounts_per_number_label.grid(row=3, column=0, pady=5, sticky=W)
         self.accounts_per_number_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
-        self.reg_type_label.grid(row=4, column=0, pady=3, sticky=W)
-        self.web_option.grid(row=5, column=0, pady=3, sticky=W)
-        self.client_option.grid(row=5, column=0, pady=3, sticky=EW)
-
         self.country_code_label.grid(row=4, column=1, pady=3, sticky=W)
         self.russia_option.grid(row=5, column=1, pady=3, sticky=W)
         self.china_option.grid(row=5, column=1, pady=3, sticky=E)
-
-        # self.email_domain_label.grid(row=4, column=0, pady=5, sticky=W)
-        # self.email_domain_entry.grid(row=4, column=1, pady=5, padx=5, sticky=W)
 
         self.tools_label.grid(row=0, column=0, pady=3, sticky=W)
         self.options_label.grid(row=2, column=0, pady=3, sticky=W)
 
         self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
-        # self.private_email_boxes_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
+        self.private_email_boxes_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
         self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
 
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
@@ -265,12 +250,11 @@ class MainWindow:
             return False
 
         if self.autoreg.get():
-            if self.reg_type.get() == 'web':
-                try:
-                    self.check_rucaptcha_key()
-                except RuCaptchaError as err:
-                    showwarning("Ошибка RuCaptcha", err, parent=self.parent)
-                    return False
+            try:
+                self.check_rucaptcha_key()
+            except RuCaptchaError as err:
+                showwarning("Ошибка RuCaptcha", err, parent=self.parent)
+                return False
             try:
                 if self.new_accounts_amount.get() <= 0:
                     raise ValueError
@@ -303,12 +287,8 @@ class MainWindow:
                 self.userdata[field] = value
 
     def registrate_without_binding(self):
-        reg_type = self.reg_type.get()
         new_accounts_amount = self.new_accounts_amount.get()
-        if reg_type == 'web':
-            self.init_threads(new_accounts_amount)
-        else:
-            self.registrate_client(new_accounts_amount)
+        self.init_threads(new_accounts_amount)
 
     def registrate_with_binding(self):
         onlinesim_api_key = self.onlinesim_api_key.get()
@@ -332,15 +312,11 @@ class MainWindow:
         ctr = 0
         new_accounts_amount = self.new_accounts_amount.get()
         accounts_per_number = self.accounts_per_number.get()
-        reg_type = self.reg_type.get()
         while ctr < new_accounts_amount:
             remainder = new_accounts_amount - ctr
             if remainder < accounts_per_number:
                 accounts_per_number = remainder
-            if reg_type == 'web':
-                new_accounts = self.init_threads(accounts_per_number, threads_amount=accounts_per_number)
-            elif reg_type == 'client':
-                new_accounts = self.registrate_client(accounts_per_number)
+            new_accounts = self.init_threads(accounts_per_number, threads_amount=accounts_per_number)
             ctr += accounts_per_number
             yield new_accounts
 
@@ -362,13 +338,6 @@ class MainWindow:
                 return
         RegistrationThread.counter = 0
         return new_accounts
-
-    def registrate_client(self, amount):
-        self.status_bar.set('Создаю аккаунты...')
-        result = steamreg.create_accounts_client(amount)
-        for login, passwd in result:
-            self.add_log('Аккаунт зарегистрирован: %s %s' % (login, passwd))
-        return result
 
     def authorize_user(self):
         if os.path.exists('database/key.txt'):
@@ -396,7 +365,7 @@ class MainWindow:
                                      'key': key,
                                      'uid': self.get_node()
                              }).json()
-        if not resp['success']:
+        if not resp['success']:  # resp['success_x3tre43']:
             showwarning('Ошибка', 'Неверный ключ либо попытка активации с неавторизованного устройства')
             return
 
@@ -436,7 +405,6 @@ class MainWindow:
                              data={'key': self.rucaptcha_api_key.get().strip(),
                                    'action': 'getbalance'})
         logger.info(resp.text)
-        print(resp.text)
         if 'ERROR_ZERO_BALANCE' in resp.text:
             raise RuCaptchaError('На счету нулевой баланс')
         elif 'ERROR_WRONG_USER_KEY' in resp.text or 'ERROR_KEY_DOES_NOT_EXIST' in resp.text:
@@ -524,12 +492,6 @@ class MainWindow:
         with open('database/userdata.txt', 'w') as f:
             json.dump(self.userdata, f)
 
-        try:
-            if ExternalRuntime.process is not None:
-                ExternalRuntime.process.kill()
-        except:
-            showwarning('Внимание!',
-                        'Для корректной работы программы введите в cmd.exe команду: pip uninstall pyexecjs')
         self.parent.destroy()
 
 

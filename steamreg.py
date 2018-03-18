@@ -6,8 +6,6 @@ import os
 import re
 import json
 import logging
-import execjs
-from execjs._external_runtime import ExternalRuntime
 from websocket import create_connection
 
 from bs4 import BeautifulSoup
@@ -28,10 +26,6 @@ class SteamRegger:
     def __init__(self, proxy=None):
         self.proxy = proxy
 
-        self.js_script = requests.get(
-            "http://shamanovski.pythonanywhere.com/static/reger.js", timeout=10).text
-        self.js_pid = None
-
     @staticmethod
     def handle_request(session, url, data={}, timeout=30):
         while True:
@@ -42,24 +36,6 @@ class SteamRegger:
                 logger.error('%s %s', err, url)
             except json.decoder.JSONDecodeError as err:
                 logger.error('%s %s', err, url)
-
-    def registrate_account(self):
-        mafile = {}
-        login_name, password = self.create_account()
-        steam_client, mobguard_data = self.add_authenticator(login_name, password)
-
-        r = steam_client.session.get('https://steamcommunity.com/my/tradeoffers/privacy')
-        s = BeautifulSoup(r.text, 'html.parser')
-        trade_url = s.find(id='trade_offer_access_url')['value']
-
-        mafile['account_password'] = password
-        mafile['trade_url'] = trade_url
-        mafile['turnover'] = 0
-        mafile['reg_ip'] = self.proxy
-        mafile.update(mobguard_data)
-        logger.info(mafile)
-
-        return mafile
 
     def mobile_login(self, login_name, password, email=None, email_passwd=None):
         steam_client = SteamClient(None, self.proxy)
@@ -320,22 +296,6 @@ class SteamRegger:
         logger.info('create account response: %s', resp)
 
         return login_name, password, email
-
-    def create_accounts_client(self, amount):
-        # self.proc = subprocess.Popen("node reger.js " + str(amount), stdout=subprocess.PIPE)
-        # outs, errs = self.proc.communicate()
-        # result = [eval(item) for item in outs.decode().strip().split('\n')]
-
-        # with open('reger.js', 'r', encoding='utf-8') as f:
-        #     script = f.read()
-
-        ctx = execjs.compile(self.js_script)
-        ctx.call("main", amount)
-        ExternalRuntime.process = None
-        with open('database/accounts_temp.txt', 'r') as f:
-            result = [item.strip().split(':') for item in f.readlines()]
-        os.remove('database/accounts_temp.txt')
-        return result
 
     def generate_mailbox(self):
         ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
