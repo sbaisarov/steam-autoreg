@@ -8,6 +8,7 @@ def confirm_packages():
     required_modules = {
         'bs4': 'bs4',
         'rsa': 'rsa',
+        'websocket': 'websocket-client',
         'requests': 'https://github.com/Shamanovski/requests/archive/master.zip',
         'execjs': 'https://github.com/Shamanovski/PyExecJS/archive/master.zip'
     }
@@ -15,13 +16,13 @@ def confirm_packages():
         if module_name not in installed_modules:
             os.system('pip install %s' % module)
 
-    required_modules = {'steam-user', 'sync-request', 'steamcommunity', 'winston'}
-    try:
-        node_modules = set(os.listdir("node_modules"))
-    except FileNotFoundError:
-        node_modules = set()
-    if not required_modules.issubset(node_modules):
-        os.system("npm i")
+    # required_modules = {'steam-user', 'sync-request', 'steamcommunity', 'winston'}
+    # try:
+    #     node_modules = set(os.listdir("node_modules"))
+    # except FileNotFoundError:
+    #     node_modules = set()
+    # if not required_modules.issubset(node_modules):
+    #     os.system("npm i")
 
 
 logging.getLogger("requests").setLevel(logging.ERROR)

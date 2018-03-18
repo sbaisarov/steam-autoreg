@@ -355,18 +355,15 @@ class SteamRegger:
         logger.info('ajaxverify response: %s', resp)
         creationid = resp['sessionid']
         response = websocket.recv()
+        websocket.close()
         try:
             mail = json.loads(response.lstrip('I'))['text']
         except Exception as err:
             logger.error('Error: %ss\nResponse: %s\nMailbox: %s\nThread: %s', err, response, email, self.name)
             sys.exit(1)
-        try:
-            link = re.search(r'(https:\/\/.+newaccountverification.+?)\n', mail).group(1)
-        except:
-            print(mail)
-            exit()
-        session.get(link)
 
+        link = re.search(r'(https:\/\/.+newaccountverification.+?)\n', mail).group(1)
+        session.get(link)
         return creationid
 
     def generate_login_name(self, session):

@@ -265,7 +265,7 @@ class MainWindow:
             return False
 
         if self.autoreg.get():
-            if self.reg_type == 'web':
+            if self.reg_type.get() == 'web':
                 try:
                     self.check_rucaptcha_key()
                 except RuCaptchaError as err:
@@ -430,13 +430,13 @@ class MainWindow:
 
     def check_rucaptcha_key(self):
         if not self.rucaptcha_api_key.get():
-            raise RuCaptchaError('"Не указан api ключ RuCaptcha"')
-            return
+            raise RuCaptchaError('Не указан api ключ RuCaptcha')
 
         resp = requests.post('http://rucaptcha.com/res.php',
                              data={'key': self.rucaptcha_api_key.get().strip(),
                                    'action': 'getbalance'})
         logger.info(resp.text)
+        print(resp.text)
         if 'ERROR_ZERO_BALANCE' in resp.text:
             raise RuCaptchaError('На счету нулевой баланс')
         elif 'ERROR_WRONG_USER_KEY' in resp.text or 'ERROR_KEY_DOES_NOT_EXIST' in resp.text:

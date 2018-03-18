@@ -61,13 +61,15 @@ class OnlineSimApi:
             resp = self._send_request(url, data)
             try:
                 sms_code = resp[0].get('msg', None)
+                time_left = resp[0].get('time', None)
             except KeyError:
                 logger.info("The time of the number usage has been expired")
                 raise OnlineSimError
-            if sms_code:
-                if sms_code not in self.used_codes:
-                    self.used_codes.add(sms_code)
-                    return sms_code
+            if sms_code and sms_code not in self.used_codes:
+                self.used_codes.add(sms_code)
+                return sms_code
+            if not time_left:
+                raise OnlineSimError
         logger.info("Couldn't receive the SMS code.")
         return None
 
