@@ -1,24 +1,16 @@
-# TODO: remove warning while quitting the app
-
 from tkinter import *
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
-import logging
-import os
 import sys
 import datetime
 import uuid
-import json
-import time
 import traceback
 import threading
 
-import requests
-
-from steampy.client import SteamClient
-from steampy.guard import generate_one_time_code
 from sms_services import *
 from steamreg import *
+
+# TODO: join group, edit profile, edit privacy, join group
 
 
 def uncaught_exceptions_handler(type, value, tb):
@@ -58,6 +50,8 @@ class MainWindow:
         self.accounts_path = ''
         self.email_boxes_path = ''
         self.email_boxes_data = None
+        self.proxy_path = ''
+        self.proxy_data = []
         self.manifest_data = None
         self.old_accounts = None
         self.autoreg = IntVar()
@@ -89,7 +83,6 @@ class MainWindow:
         self.rucaptcha_apikey_label = Label(self.frame, text='rucaptcha api key:')
         self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key, disabledforeground='#808080')
 
-
         self.country_code_label = Label(self.frame, text='Страна номера:')
         self.russia_option = Radiobutton(self.frame, text="Россия", variable=self.country_code, value="7")
         self.china_option = Radiobutton(self.frame, text="Китай", variable=self.country_code, value="86")
@@ -111,7 +104,6 @@ class MainWindow:
                                                    disabledforeground='#808080')
         self.fold_accounts_checkbutton = Checkbutton(tools_frame, text='Раскладывать по папкам',
                                                      variable=self.fold_accounts, disabledforeground='#808080')
-
 
         self.start_button = Button(tools_frame, text='Начать', command=self.start_process,
                                    bg='#CEC8C8', relief=GROOVE, width=50)
@@ -176,6 +168,7 @@ class MainWindow:
         self.load_menu.add_command(label="Свои аккаунты", command=self.accounts_open)
         self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
         self.load_menu.add_command(label="SDA Manifest", command=self.manifest_open)
+        self.load_menu.add_command(label="Proxy", command=self.proxy_open)
 
         self.onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
         self.onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
@@ -189,15 +182,14 @@ class MainWindow:
         self.accounts_per_number_label.grid(row=3, column=0, pady=5, sticky=W)
         self.accounts_per_number_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
 
-        self.country_code_label.grid(row=4, column=1, pady=3, sticky=W)
-        self.russia_option.grid(row=5, column=1, pady=3, sticky=W)
-        self.china_option.grid(row=5, column=1, pady=3, sticky=E)
+        self.country_code_label.grid(row=4, column=0, pady=3, sticky=W)
+        self.russia_option.grid(row=5, column=0, pady=3, sticky=W)
+        self.china_option.grid(row=5, column=0, pady=3, sticky=E)
 
         self.tools_label.grid(row=0, column=0, pady=3, sticky=W)
         self.options_label.grid(row=2, column=0, pady=3, sticky=W)
 
         self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
-        self.private_email_boxes_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
         self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
 
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
@@ -431,18 +423,8 @@ class MainWindow:
                     initialdir=dir,
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
-        if accounts_path:
-            return self.load_accounts(accounts_path)
 
-    def load_accounts(self, accounts_path):
-        try:
-            with open(accounts_path, 'r') as f:
-                self.old_accounts = [i.rstrip().split(':') for i in f.readlines()]
-        except (EnvironmentError, TypeError):
-            return
-
-        self.status_bar.set("Файл загружен: %s" % os.path.basename(accounts_path))
-        self.accounts_path = accounts_path
+        self.accounts_path = self.load_file(accounts_path, self.old_accounts, r"[\d\w]+:.+\n?$")
 
     def old_account_generator(self):
         start = 0
@@ -459,15 +441,8 @@ class MainWindow:
                     initialdir=dir_,
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
-        if email_boxes_path:
-            return self.load_emails(email_boxes_path)
 
-    def load_emails(self, email_boxes_path):
-        try:
-            with open(email_boxes_path, 'r') as f:
-                self.email_boxes_data = [i.strip() for i in f.readlines()]
-        except (EnvironmentError, TypeError):
-            return
+        self.email_boxes_path = self.load_file(email_boxes_path, self.email_boxes_data, r"[\d\w]+@[\d\w]+\.\w+:.+\n?$")
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -478,7 +453,7 @@ class MainWindow:
                     filetypes=[('manifest', '*.json')],
                     defaultextension='.json', parent=self.parent)
         if manifest_path:
-            return self.load_manifest(manifest_path)
+            return self.load_file(manifest_path)
 
     def load_manifest(self, manifest_path):
         try:
@@ -487,6 +462,36 @@ class MainWindow:
             self.manifest_path = manifest_path
         except (EnvironmentError, TypeError):
             pass
+
+        self.status_bar.set("Файл загружен: %s" % os.path.basename(manifest_path))
+
+    def proxy_open(self):
+        dir_ = (os.path.dirname(self.proxy_path)
+                if self.proxy_path is not None else '.')
+        proxy_path = askopenfilename(
+            title='Proxy',
+            initialdir=dir_,
+            filetypes=[('proxy', '*.txt')],
+            defaultextension='.txt', parent=self.parent)
+
+        self.proxy_path = self.load_file(proxy_path, self.proxy_data,
+                                         "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:\d{1,5}\n?$")
+
+    def load_file(self, path, data, regexr):
+        if not path:
+            return ''
+        try:
+            with open(path, 'r') as f:
+                for row, item in enumerate(f.readlines()):
+                    if not re.match(regexr, item):
+                        self.add_log("Недопустимое значение: {0} в строке {1}".format(item.strip(), row))
+                        continue
+                    data.append(item.strip())
+        except (EnvironmentError, TypeError):
+            return ''
+
+        self.status_bar.set("Файл загружен: %s" % os.path.basename(path))
+        return path
 
     def app_quit(self, *ignore):
         with open('database/userdata.txt', 'w') as f:
