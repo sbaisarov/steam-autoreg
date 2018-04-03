@@ -4,13 +4,12 @@ from tkinter.messagebox import showwarning
 import sys
 import datetime
 import uuid
+import os
 import traceback
 import threading
 
 from sms_services import *
 from steamreg import *
-
-# TODO: join group, edit profile, edit privacy, join group
 
 
 def uncaught_exceptions_handler(type, value, tb):
@@ -63,6 +62,7 @@ class MainWindow:
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
         self.temp_mail = IntVar()
+        self.proxy_bool = IntVar()
         self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
         self.status_bar = StringVar()
@@ -96,6 +96,11 @@ class MainWindow:
         self.temp_mail_checkbutton = Checkbutton(tools_frame, text='Использовать временные почты',
                                                  variable=self.temp_mail, command=self.set_states,
                                                  disabledforeground='#808080')
+
+        self.proxy_checkbutton = Checkbutton(tools_frame, text='Искать публичные прокси',
+                                             variable=self.proxy_bool, command=self.set_states,
+                                             disabledforeground='#808080')
+
         self.mafile_checkbutton = Checkbutton(tools_frame, text='Импортировать maFile в SDA',
                                               variable=self.import_mafile, command=self.set_states,
                                               disabledforeground='#808080')
@@ -167,8 +172,8 @@ class MainWindow:
         self.menubar.add_cascade(label="Загрузить...", menu=self.load_menu)
         self.load_menu.add_command(label="Свои аккаунты", command=self.accounts_open)
         self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
+        self.load_menu.add_command(label="Свои proxy", command=self.proxy_open)
         self.load_menu.add_command(label="SDA Manifest", command=self.manifest_open)
-        self.load_menu.add_command(label="Proxy", command=self.proxy_open)
 
         self.onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
         self.onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
@@ -191,6 +196,7 @@ class MainWindow:
 
         self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
         self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
+        self.proxy_checkbutton.grid(row=4, column=0, pady=1, sticky=W)
 
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
         self.mafile_checkbutton.grid(row=3, column=1, pady=1)
@@ -453,7 +459,7 @@ class MainWindow:
                     filetypes=[('manifest', '*.json')],
                     defaultextension='.json', parent=self.parent)
         if manifest_path:
-            return self.load_file(manifest_path)
+            return self.load_manifest(manifest_path)
 
     def load_manifest(self, manifest_path):
         try:
@@ -461,7 +467,7 @@ class MainWindow:
                 self.manifest_data = json.load(f)
             self.manifest_path = manifest_path
         except (EnvironmentError, TypeError):
-            pass
+            return
 
         self.status_bar.set("Файл загружен: %s" % os.path.basename(manifest_path))
 
@@ -471,7 +477,7 @@ class MainWindow:
         proxy_path = askopenfilename(
             title='Proxy',
             initialdir=dir_,
-            filetypes=[('proxy', '*.txt')],
+            filetypes=[('Text file (.txt)', '*.txt')],
             defaultextension='.txt', parent=self.parent)
 
         self.proxy_path = self.load_file(proxy_path, self.proxy_data,
@@ -490,8 +496,9 @@ class MainWindow:
         except (EnvironmentError, TypeError):
             return ''
 
-        self.status_bar.set("Файл загружен: %s" % os.path.basename(path))
-        return path
+        if data:
+            self.status_bar.set("Файл загружен: %s" % os.path.basename(path))
+            return path
 
     def app_quit(self, *ignore):
         with open('database/userdata.txt', 'w') as f:
@@ -516,7 +523,8 @@ class RegistrationThread(threading.Thread):
 
     def run(self):
         while RegistrationThread.counter < self.amount:
-            RegistrationThread.counter += 1
+            with RegistrationThread.lock:
+                RegistrationThread.counter += 1
             try:
                 self.registrate_account()
             except Exception as err:

@@ -2,13 +2,12 @@ import requests
 import time
 import string
 import random
-import os
+import sys
 import re
 import json
 import logging
 from websocket import create_connection
-
-from bs4 import BeautifulSoup
+from proxybroker import Broker
 
 from steampy.client import SteamClient
 from steampy import guard
@@ -70,7 +69,6 @@ class SteamRegger:
             'arg': phone_num,
             'sessionid': sessionid
         }
-        is_valid_number = True
         response = self.handle_request(steam_client.session,
                                        'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(str(response))
@@ -319,7 +317,7 @@ class SteamRegger:
         try:
             mail = json.loads(response.lstrip('I'))['text']
         except Exception as err:
-            logger.error('Error: %ss\nResponse: %s\nMailbox: %s\nThread: %s', err, response, email, self.name)
+            logger.error('Error: %ss\nResponse: %s\nMailbox: %s', err, response, email)
             sys.exit(1)
 
         link = re.search(r'(https:\/\/.+newaccountverification.+?)\n', mail).group(1)
