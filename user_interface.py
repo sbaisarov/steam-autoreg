@@ -215,6 +215,9 @@ class MainWindow:
         if not self.log_frozen:
             self.log_box.yview(END)
 
+    def func(self):
+        pass
+
     def freeze_log(self, *ignore):
         self.log_frozen = True
 
