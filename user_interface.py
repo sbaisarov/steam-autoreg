@@ -3,7 +3,6 @@ from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning
 import sys
 import datetime
-import uuid
 import os
 import traceback
 import threading
@@ -62,7 +61,6 @@ class MainWindow:
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
         self.temp_mail = IntVar()
-        self.proxy_bool = IntVar()
         self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
         self.status_bar = StringVar()
@@ -76,12 +74,12 @@ class MainWindow:
         self.accounts_per_number_entry = Entry(self.frame, textvariable=self.accounts_per_number,
                                                width=2, disabledforeground='#808080')
         self.onlinesim_apikey_label = Label(self.frame, text='onlinesim api key:')
-        self.onlinesim_apikey_entry = Entry(self.frame, textvariable=self.onlinesim_api_key, disabledforeground='#808080')
+        self.onlinesim_apikey_entry = Entry(self.frame, textvariable=self.onlinesim_api_key, disabledforeground='#808080', width=25)
 
         self.new_accounts_amount_label = Label(self.frame, text='Количество аккаунтов для регистрации:')
         self.new_accounts_amount_entry = Entry(self.frame, textvariable=self.new_accounts_amount, width=4,  disabledforeground='#808080')
         self.rucaptcha_apikey_label = Label(self.frame, text='rucaptcha api key:')
-        self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key, disabledforeground='#808080')
+        self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key, disabledforeground='#808080', width=25)
 
         self.country_code_label = Label(self.frame, text='Страна номера:')
         self.russia_option = Radiobutton(self.frame, text="Россия", variable=self.country_code, value="7")
@@ -96,10 +94,6 @@ class MainWindow:
         self.temp_mail_checkbutton = Checkbutton(tools_frame, text='Использовать временные почты',
                                                  variable=self.temp_mail, command=self.set_states,
                                                  disabledforeground='#808080')
-
-        self.proxy_checkbutton = Checkbutton(tools_frame, text='Искать публичные прокси',
-                                             variable=self.proxy_bool, command=self.set_states,
-                                             disabledforeground='#808080')
 
         self.mafile_checkbutton = Checkbutton(tools_frame, text='Импортировать maFile в SDA',
                                               variable=self.import_mafile, command=self.set_states,
@@ -164,8 +158,11 @@ class MainWindow:
             if attr_name == 'manifest_path':
                 self.load_manifest(value)
             else:
-                attribute = self.__getattribute__(attr_name)
-                attribute.set(value)
+                try:
+                    attribute = self.__getattribute__(attr_name)
+                    attribute.set(value)
+                except AttributeError:
+                    continue
 
     def pack_widgets(self):
         self.load_menu = Menu(self.menubar, tearoff=0)
@@ -176,7 +173,7 @@ class MainWindow:
         self.load_menu.add_command(label="SDA Manifest", command=self.manifest_open)
 
         self.onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
-        self.onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
+        self.onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W, )
 
         self.rucaptcha_apikey_label.grid(row=1, column=0, pady=5, sticky=W)
         self.rucaptcha_apikey_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
@@ -196,7 +193,6 @@ class MainWindow:
 
         self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
         self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
-        self.proxy_checkbutton.grid(row=4, column=0, pady=1, sticky=W)
 
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
         self.mafile_checkbutton.grid(row=3, column=1, pady=1)
@@ -214,9 +210,6 @@ class MainWindow:
         self.log_box.insert(END, message)
         if not self.log_frozen:
             self.log_box.yview(END)
-
-    def func(self):
-        pass
 
     def freeze_log(self, *ignore):
         self.log_frozen = True
@@ -376,9 +369,11 @@ class MainWindow:
         top = Toplevel(self.parent)
         top.title("Успешно!")
         top.geometry('230x50')
-        msg = ('Программа активирована. Приятного пользования!')
+        msg = 'Программа активирована. Приятного пользования!'
         msg = Message(top, text=msg, aspect=500)
         msg.grid()
+
+        self.frame.destroy()
 
         self.__init__(self.parent)
 
@@ -388,7 +383,7 @@ class MainWindow:
         license_key_label.grid(row=0, column=0, pady=5, sticky=W)
         self.license_key_entry = Entry(frame)
         self.license_key_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
-        login_label = Label(self.frame, text='Ваш логин:')
+        login_label = Label(self.frame, text='Ваш логин (любой):')
         login_label.grid(row=1, column=0, pady=5, sticky=W)
         self.login_entry = Entry(frame)
         self.login_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
@@ -413,10 +408,18 @@ class MainWindow:
 
     @staticmethod
     def get_node():
-        mac = uuid.getnode()
-        if (mac >> 40) % 2:
-            raise OSError('Не удается авторизовать устройство. Обратитесь в тех.поддержку.')
-        return hex(mac)
+        import wmi
+        import hashlib
+        hardware = wmi.WMI()
+        try:
+            processor_id = hardware.Win32_Processor()[0].ProcessorId
+            motherboard_id = hardware.Win32_MotherboardDevice()[0].qualifiers["UUID"].strip("{}")
+        except (AttributeError, KeyError) as err:
+            logger.info(err)
+            showwarning("Не удалось авторизовать устройство. Обратитесь к разработчику.")
+            return None
+
+        return hashlib.md5((processor_id + motherboard_id).encode('utf-8')).hexdigest()
 
     def start_process(self):
         if len(threading.enumerate()) == 1:
@@ -483,16 +486,16 @@ class MainWindow:
             filetypes=[('Text file (.txt)', '*.txt')],
             defaultextension='.txt', parent=self.parent)
 
-        self.proxy_path = self.load_file(proxy_path, self.proxy_data,
-                                         "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:\d{1,5}\n?$")
+        self.proxy_path = self.load_file(proxy_path, self.proxy_data)
+        steamreg.proxy = self.proxy_data
 
-    def load_file(self, path, data, regexr):
+    def load_file(self, path, data, regexr=None):
         if not path:
             return ''
         try:
             with open(path, 'r') as f:
                 for row, item in enumerate(f.readlines()):
-                    if not re.match(regexr, item):
+                    if regexr and not re.match(regexr, item):
                         self.add_log("Недопустимое значение: {0} в строке {1}".format(item.strip(), row))
                         continue
                     data.append(item.strip())
@@ -662,14 +665,13 @@ class Binder:
         return tzid, number, is_repeated
 
     def save_attached_account(self, mobguard_data, login, passwd, number, offer_link, email):
-        if self.window.mobile_bind.get():
-            if self.window.autoreg.get():
-                accounts_dir = 'новые_аккаунты'
-                if self.window.fold_accounts.get():
-                    accounts_dir = os.path.join(accounts_dir, login)
-                    os.makedirs(accounts_dir)
-            else:
-                accounts_dir = 'загруженные_аккаунты'
+        if self.window.autoreg.get():
+            accounts_dir = 'новые_аккаунты'
+            if self.window.fold_accounts.get():
+                accounts_dir = os.path.join(accounts_dir, login)
+                os.makedirs(accounts_dir)
+        else:
+            accounts_dir = 'загруженные_аккаунты'
 
         steamid = mobguard_data['Session']['SteamID']
         txt_path = os.path.join(accounts_dir, login + '.txt')

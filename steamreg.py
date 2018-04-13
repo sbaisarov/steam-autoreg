@@ -8,6 +8,7 @@ import json
 import logging
 from websocket import create_connection
 from proxybroker import Broker
+import asyncio
 
 from steampy.client import SteamClient
 from steampy import guard
@@ -22,8 +23,18 @@ class RuCaptchaError(Exception): pass
 
 class SteamRegger:
 
-    def __init__(self, proxy=None):
-        self.proxy = proxy
+    def __init__(self):
+        self.proxy_queue = asyncio.Queue()
+        self.proxy_broker = Broker(queue=self.proxy_queue)
+        loop = asyncio.get_event_loop()
+        tasks = asyncio.gather(self.load_proxy(open(r"C:\Users\sham\Desktop\proxies.txt")), self.get_proxy())
+        loop.run_until_complete(tasks)
+
+    async def load_proxy(self, proxy_file):
+        await self.proxy_broker.find(types=['HTTP', 'HTTPS'], data=proxy_file)
+
+    async def get_proxy(self):
+        proxy = await self.proxy_queue.get()
 
     @staticmethod
     def handle_request(session, url, data={}, timeout=30):
@@ -36,8 +47,9 @@ class SteamRegger:
             except json.decoder.JSONDecodeError as err:
                 logger.error('%s %s', err, url)
 
-    def mobile_login(self, login_name, password, email=None, email_passwd=None):
-        steam_client = SteamClient(None, self.proxy)
+    @staticmethod
+    def mobile_login(login_name, password, email=None, email_passwd=None):
+        steam_client = SteamClient(None)
         resp = steam_client.mobile_login(login_name, password, None, email, email_passwd)
         resp_message = resp.get('message', None)
         if resp_message:
@@ -245,7 +257,7 @@ class SteamRegger:
             return resolved_captcha
 
         session = requests.Session()
-        if self.proxy:
+        if not self.proxy_queue.empty():
             session.proxies.update(self.proxy)
         session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
@@ -256,7 +268,7 @@ class SteamRegger:
             captcha_text = resolve_captcha(captcha_id, gid)
             if not captcha_text:
                 continue
-            login_name = self.generate_login_name(session)
+            login_name = self.generate_login_name()
             password = self.generate_credential(2, 4)
             with thread_lock:
                 email, ws = self.generate_mailbox()
@@ -324,10 +336,10 @@ class SteamRegger:
         session.get(link)
         return creationid
 
-    def generate_login_name(self, session):
+    def generate_login_name(self):
         while True:
             login_name = self.generate_credential(2, 4, uppercase=False)
-            r = self.handle_request(session, 'https://store.steampowered.com/join/checkavail',
+            r = self.handle_request(requests.Session(), 'https://store.steampowered.com/join/checkavail',
                                     data={'accountname': login_name, 'count': 1})
             logger.info(str(r) + " %s", login_name)
             if r['bAvailable']:
@@ -382,14 +394,4 @@ class SteamRegger:
 
 
 if __name__ == '__main__':
-    import logging
-
-    logging.getLogger("requests").setLevel(logging.ERROR)
-    logger = logging.getLogger(__name__)
-    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-    handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
     foo = SteamRegger()
-    foo.create_accounts_client("1")
