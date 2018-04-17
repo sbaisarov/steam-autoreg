@@ -8,10 +8,11 @@ import json
 import logging
 from websocket import create_connection
 from proxybroker import Broker
+import aiohttp
 import asyncio
 
-from steampy.client import SteamClient
-from steampy import guard
+# from steampy.client import SteamClient
+# from steampy import guard
 
 logger = logging.getLogger('__main__')
 
@@ -24,14 +25,38 @@ class RuCaptchaError(Exception): pass
 class SteamRegger:
 
     def __init__(self):
+        pass
         self.proxy_queue = asyncio.Queue()
-        self.proxy_broker = Broker(queue=self.proxy_queue)
-        loop = asyncio.get_event_loop()
-        tasks = asyncio.gather(self.load_proxy(open(r"C:\Users\sham\Desktop\proxies.txt")), self.get_proxy())
-        loop.run_until_complete(tasks)
+        # self.proxy_broker = Broker(queue=self.proxy_queue, max_tries=1)
+        # loop = asyncio.get_event_loop()
+        # tasks = asyncio.gather(self.load_proxy(open(r"C:\Users\sham\Desktop\proxies.txt")), self.get_proxy())
+        # loop.run_until_complete(tasks)
 
-    async def load_proxy(self, proxy_file):
-        await self.proxy_broker.find(types=['HTTP', 'HTTPS'], data=proxy_file)
+    def init_proxy_server(self, proxy_file):
+        loop = asyncio.get_event_loop()
+        self.broker = BrokerExtended(max_tries=1, loop=loop, queue=self.proxy_queue)
+        host, port = '127.0.0.1', 8888
+        proxy_url = 'http://%s:%d' % (host, port)
+        codes = [200, 301, 302]
+        self.broker.serve(host=host, port=port, data=open(r"C:\Users\\shamanovskiy\Desktop\proxies.txt"), types=['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5'], limit=10, max_tries=3,
+                     prefer_connect=True, min_req_proxy=5, max_error_rate=0.5,
+                     max_resp_time=8, http_allowed_codes=codes, backlog=100)
+
+        # resp = requests.get("http://httpbin.org/get", proxies={"http": proxy_url}, timeout=5)
+        # print(resp.text)
+        loop.run_until_complete(self.request(proxy_url))
+        # await self.proxy_broker.find(types=['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5'], data=proxy_file)
+
+    async def request(self, proxy_url):
+        for i in range(10):
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://httpbin.org/get", proxy=proxy_url) as resp:
+                    result = await resp.read()
+                    ip = json.loads(result.decode('utf-8'))["origin"]
+                    print(ip)
+                    proxy = self.broker.fetch_proxy(ip)
+                    self.broker.remove_proxy(proxy)
+                    print(self.broker.show_stats())
 
     async def get_proxy(self):
         proxy = await self.proxy_queue.get()
@@ -156,7 +181,7 @@ class SteamRegger:
 
     def finalize_authenticator_request(self, steam_client, mobguard_data, sms_code):
         one_time_code = guard.generate_one_time_code(mobguard_data['shared_secret'], int(time.time()))
-        data= {
+        data = {
             "steamid": steam_client.oauth['steamid'],
             "activation_code": sms_code,
             "access_token": steam_client.oauth['oauth_token'],
@@ -393,5 +418,21 @@ class SteamRegger:
             return ''
 
 
+class BrokerExtended(Broker):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def fetch_proxy(self, host):
+        print(host)
+        for proxy_priority, proxy in self._server._proxy_pool._pool:
+            print(proxy.host)
+            if host == proxy.host:
+                return proxy
+
+    def remove_proxy(self, proxy):
+        self._server._proxy_pool._pool.remove((proxy.priority, proxy))
+
+
 if __name__ == '__main__':
     foo = SteamRegger()
+    foo.init_proxy_server(None)
