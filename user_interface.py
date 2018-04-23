@@ -6,6 +6,7 @@ import datetime
 import os
 import traceback
 import threading
+from proxybroker import Broker
 
 from sms_services import *
 from steamreg import *
@@ -39,28 +40,38 @@ class MainWindow:
         with open('database/userdata.txt', 'r') as f:
             self.userdata = json.load(f)
 
-        success = self.authorize_user()
+        # success = self.authorize_user()
+        success = True
         if not success:
             self.deploy_activation_widgets(self.frame)
             return
+
+        self.loop = asyncio.get_event_loop()
+        self.proxies = asyncio.Queue(loop=self.loop)
+
+        self.proxy_broker = Broker(queue=self.proxies, loop=self.loop)
 
         self.manifest_path = ''
         self.accounts_path = ''
         self.email_boxes_path = ''
         self.email_boxes_data = None
         self.proxy_path = ''
+
         self.proxy_data = []
         self.manifest_data = None
         self.old_accounts = None
+
         self.autoreg = IntVar()
         self.import_mafile = IntVar()
         self.mobile_bind = IntVar()
         self.fold_accounts = IntVar()
+        self.temp_mail = IntVar()
+        self.use_proxy = IntVar()
+
         self.onlinesim_api_key = StringVar()
         self.rucaptcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
-        self.temp_mail = IntVar()
         self.private_email_boxes = IntVar()
         self.email_domain = StringVar()
         self.status_bar = StringVar()
@@ -94,6 +105,10 @@ class MainWindow:
         self.temp_mail_checkbutton = Checkbutton(tools_frame, text='Использовать временные почты',
                                                  variable=self.temp_mail, command=self.set_states,
                                                  disabledforeground='#808080')
+
+        self.proxies_checkbutton = Checkbutton(tools_frame, text='Использовать прокси',
+                                               variable=self.use_proxy, command=self.set_states,
+                                               disabledforeground='#808080')
 
         self.mafile_checkbutton = Checkbutton(tools_frame, text='Импортировать maFile в SDA',
                                               variable=self.import_mafile, command=self.set_states,
@@ -193,6 +208,7 @@ class MainWindow:
 
         self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
         self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
+        self.proxies_checkbutton.grid(row=4, column=0, pady=1, sticky=W)
 
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
         self.mafile_checkbutton.grid(row=3, column=1, pady=1)
@@ -220,6 +236,10 @@ class MainWindow:
     def run_process(self):
         if not self.check_input():
             return
+
+        asyncio.ensure_future(self.proxy_broker.find(
+            data=open(self.proxy_path), types=['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5']), loop=self.loop)
+
         self.save_input()
         try:
             if self.mobile_bind.get():
@@ -238,6 +258,10 @@ class MainWindow:
         self.status_bar.set('Готов...')
 
     def check_input(self):
+        if self.use_proxy.get() and not self.proxy_path:
+            showwarning("Ошибка", "Прокси не загружены")
+            return False
+
         if not self.manifest_path and self.import_mafile.get():
             showwarning("Ошибка", "Не указан путь к manifest файлу Steam Desktop Authenticator",
                         parent=self.parent)
@@ -267,6 +291,7 @@ class MainWindow:
                                       "связанных с 1 номером (больше нуля но меньше 30-и).",
                             parent=self.parent)
                 return False
+
         return True
 
     def save_input(self):
@@ -282,7 +307,7 @@ class MainWindow:
 
     def registrate_without_binding(self):
         new_accounts_amount = self.new_accounts_amount.get()
-        self.init_threads(new_accounts_amount)
+        self.loop.run_until_complete(self.init_threads(new_accounts_amount))
 
     def registrate_with_binding(self):
         onlinesim_api_key = self.onlinesim_api_key.get()
@@ -299,36 +324,42 @@ class MainWindow:
         accounts = self.new_accounts_generator() if self.autoreg.get() else self.old_account_generator()
         sms_service = OnlineSimApi(onlinesim_api_key)
         binder = Binder(self, sms_service)
-        for accounts_package in accounts:
-            binder.bind_accounts(accounts_package)
+        for portion in accounts:
+            binder.bind_accounts(portion)
 
     def new_accounts_generator(self):
         ctr = 0
         new_accounts_amount = self.new_accounts_amount.get()
         accounts_per_number = self.accounts_per_number.get()
+        loop = asyncio.get_event_loop()
+        queue = asyncio.Queue()
+        broker = Broker(queue=queue)
+        asyncio.ensure_future(broker.find(
+            data=open(self.proxy_path), types=['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5']))
         while ctr < new_accounts_amount:
             remainder = new_accounts_amount - ctr
             if remainder < accounts_per_number:
                 accounts_per_number = remainder
-            new_accounts = self.init_threads(accounts_per_number, threads_amount=accounts_per_number)
+            loop.run_until_complete(self.init_threads(accounts_per_number, threads_amount=accounts_per_number))
             ctr += accounts_per_number
             yield new_accounts
 
-    def init_threads(self, accs_amount, threads_amount=20):
+    async def init_threads(self, accs_amount, threads_amount=20):
         if threads_amount > 20:
             threads_amount = 20
         self.status_bar.set('Создаю аккаунты, решаю капчи...')
         threads = []
         new_accounts = []
         for _ in range(threads_amount):
-            t = RegistrationThread(self, accs_amount, new_accounts)
+            proxy = await self.proxies.get() if self.use_proxy.get() else None
+            t = RegistrationThread(self, accs_amount, proxy, result=new_accounts)
             t.start()
             threads.append(t)
         for thread in threads:
             thread.join()
             if thread.error:
-                error_origin, error_text = thread.error
-                showwarning("Ошибка %s" % error_origin, error_text)
+                origin, text = thread.error
+                showwarning("Ошибка %s" % origin, text)
                 return
         RegistrationThread.counter = 0
         return new_accounts
@@ -414,7 +445,7 @@ class MainWindow:
         try:
             processor_id = hardware.Win32_Processor()[0].ProcessorId
             motherboard_id = hardware.Win32_MotherboardDevice()[0].qualifiers["UUID"].strip("{}")
-        except (AttributeError, KeyError) as err:
+        except (AttributeError, KeyError, IndexError) as err:
             logger.info(err)
             showwarning("Не удалось авторизовать устройство. Обратитесь к разработчику.")
             return None
@@ -422,10 +453,10 @@ class MainWindow:
         return hashlib.md5((processor_id + motherboard_id).encode('utf-8')).hexdigest()
 
     def start_process(self):
-        if len(threading.enumerate()) == 1:
-            t = threading.Thread(target=self.run_process)
-            t.daemon = True
-            t.start()
+        # if len(threading.enumerate()) == 1:
+        t = threading.Thread(target=self.run_process)
+        t.daemon = True
+        t.start()
 
     def accounts_open(self):
         dir = (os.path.dirname(self.accounts_path)
@@ -487,7 +518,6 @@ class MainWindow:
             defaultextension='.txt', parent=self.parent)
 
         self.proxy_path = self.load_file(proxy_path, self.proxy_data)
-        steamreg.proxy = self.proxy_data
 
     def load_file(self, path, data, regexr=None):
         if not path:
@@ -500,6 +530,7 @@ class MainWindow:
                         continue
                     data.append(item.strip())
         except (EnvironmentError, TypeError):
+            showwarning("Ошибка", "Не удается открыть указанный файл")
             return ''
 
         if data:
@@ -519,8 +550,9 @@ class RegistrationThread(threading.Thread):
     lock = threading.Lock()
     email_lock = threading.Lock()
 
-    def __init__(self, window, amount, result=None):
+    def __init__(self, window, amount, proxy=None, result=None):
         threading.Thread.__init__(self)
+        self.proxy = proxy
         self.daemon = True
         self.window = window
         self.amount = amount
@@ -563,7 +595,8 @@ class RegistrationThread(threading.Thread):
         if self.result is not None:
             self.result.append((login, passwd, email))
 
-    def save_unattached_account(self, login, passwd):
+    @staticmethod
+    def save_unattached_account(login, passwd):
         with open('accounts.txt', 'a+') as f:
             f.write('%s:%s\n' % (login, passwd))
 

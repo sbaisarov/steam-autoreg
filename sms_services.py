@@ -148,7 +148,7 @@ class SmsActivateApi:
             logger.info('Ответ от sms-activate на запрос получить статус: ' + resp.text)
             status, delimeter, smscode_msg = resp.text.partition(':')
             try:
-                sms_code = re.search('\d+', smscode_msg).group()
+                sms_code = re.search(r'\d+', smscode_msg).group()
             except AttributeError:
                 sms_code = ''
             time.sleep(3)

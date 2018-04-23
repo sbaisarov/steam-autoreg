@@ -7,12 +7,9 @@ import re
 import json
 import logging
 from websocket import create_connection
-from proxybroker import Broker
-import aiohttp
-import asyncio
 
-# from steampy.client import SteamClient
-# from steampy import guard
+from steampy.client import SteamClient
+from steampy import guard
 
 logger = logging.getLogger('__main__')
 
@@ -26,40 +23,6 @@ class SteamRegger:
 
     def __init__(self):
         pass
-        self.proxy_queue = asyncio.Queue()
-        # self.proxy_broker = Broker(queue=self.proxy_queue, max_tries=1)
-        # loop = asyncio.get_event_loop()
-        # tasks = asyncio.gather(self.load_proxy(open(r"C:\Users\sham\Desktop\proxies.txt")), self.get_proxy())
-        # loop.run_until_complete(tasks)
-
-    def init_proxy_server(self, proxy_file):
-        loop = asyncio.get_event_loop()
-        self.broker = BrokerExtended(max_tries=1, loop=loop, queue=self.proxy_queue)
-        host, port = '127.0.0.1', 8888
-        proxy_url = 'http://%s:%d' % (host, port)
-        codes = [200, 301, 302]
-        self.broker.serve(host=host, port=port, data=open(r"C:\Users\\shamanovskiy\Desktop\proxies.txt"), types=['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5'], limit=10, max_tries=3,
-                     prefer_connect=True, min_req_proxy=5, max_error_rate=0.5,
-                     max_resp_time=8, http_allowed_codes=codes, backlog=100)
-
-        # resp = requests.get("http://httpbin.org/get", proxies={"http": proxy_url}, timeout=5)
-        # print(resp.text)
-        loop.run_until_complete(self.request(proxy_url))
-        # await self.proxy_broker.find(types=['HTTP', 'HTTPS', 'SOCKS4', 'SOCKS5'], data=proxy_file)
-
-    async def request(self, proxy_url):
-        for i in range(10):
-            async with aiohttp.ClientSession() as session:
-                async with session.get("http://httpbin.org/get", proxy=proxy_url) as resp:
-                    result = await resp.read()
-                    ip = json.loads(result.decode('utf-8'))["origin"]
-                    print(ip)
-                    proxy = self.broker.fetch_proxy(ip)
-                    self.broker.remove_proxy(proxy)
-                    print(self.broker.show_stats())
-
-    async def get_proxy(self):
-        proxy = await self.proxy_queue.get()
 
     @staticmethod
     def handle_request(session, url, data={}, timeout=30):
@@ -255,9 +218,9 @@ class SteamRegger:
             captcha_id = resp.text.partition('|')[2]
             return captcha_id, gid
 
-        def send_captcha(captchagid, captcha_text, email):
+        def send_captcha():
             data = {
-                'captchagid': captchagid,
+                'captchagid': gid,
                 'captcha_text': captcha_text,
                 'email': email,
                 'count': '1'
@@ -267,7 +230,7 @@ class SteamRegger:
             logger.info(resp)
             return resp
 
-        def resolve_captcha(captcha_id, gid):
+        def resolve_captcha():
             while True:
                 time.sleep(10)
                 r = requests.post('http://rucaptcha.com/res.php?key={}&action=get&id={}'
@@ -282,15 +245,15 @@ class SteamRegger:
             return resolved_captcha
 
         session = requests.Session()
-        if not self.proxy_queue.empty():
-            session.proxies.update(self.proxy)
+        # if not self.proxy_queue.empty():
+        #     session.proxies.update(self.proxy)
         session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                                 'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
         while True:
             captcha_id, gid = generate_captcha()
-            captcha_text = resolve_captcha(captcha_id, gid)
+            captcha_text = resolve_captcha()
             if not captcha_text:
                 continue
             login_name = self.generate_login_name()
@@ -299,7 +262,7 @@ class SteamRegger:
                 email, ws = self.generate_mailbox()
             logger.info("Email box: %s", email)
             logger.info("Resolving captcha... %s", login_name)
-            resp = send_captcha(gid, captcha_text, email)
+            resp = send_captcha()
             if not resp['bCaptchaMatches']:
                 logger.info("Captcha text is wrong: %s", captcha_text)
                 requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
@@ -410,7 +373,7 @@ class SteamRegger:
     def fetch_tradeoffer_link(steam_client):
         url = 'http://steamcommunity.com/profiles/%s/tradeoffers/privacy' % steam_client.steamid
         resp = steam_client.session.get(url, timeout=30)
-        regexr = 'https:\/\/steamcommunity.com\/tradeoffer\/new\/\?partner=.+&token=.+(?=" )'
+        regexr = r'https:\/\/steamcommunity.com\/tradeoffer\/new\/\?partner=.+&token=.+(?=" )'
         try:
             return re.search(regexr, resp.text).group()
         except AttributeError as err:
@@ -418,21 +381,5 @@ class SteamRegger:
             return ''
 
 
-class BrokerExtended(Broker):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def fetch_proxy(self, host):
-        print(host)
-        for proxy_priority, proxy in self._server._proxy_pool._pool:
-            print(proxy.host)
-            if host == proxy.host:
-                return proxy
-
-    def remove_proxy(self, proxy):
-        self._server._proxy_pool._pool.remove((proxy.priority, proxy))
-
-
 if __name__ == '__main__':
     foo = SteamRegger()
-    foo.init_proxy_server(None)
