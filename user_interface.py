@@ -6,7 +6,6 @@ import os
 import traceback
 import threading
 import asyncio
-import enum
 from collections import namedtuple
 from queue import Queue, Empty
 from proxybroker import Broker
@@ -15,6 +14,7 @@ import hashlib
 
 from sms_services import *
 from steamreg import *
+from enums import *
 
 
 logger = logging.getLogger('__main__')
@@ -27,20 +27,11 @@ if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
 
-steamreg = SteamRegger()
-
 with open("database/interface_states.json", "r") as f:
     STATES = json.load(f)
 
 loop = asyncio.get_event_loop()
 Account = namedtuple("Account", ['login', 'password', 'email', 'email_password'])
-
-
-class Proxy(enum.IntEnum):
-    Local = 0
-    Public = 1
-    Url = 2
-    File = 3
 
 
 class MainWindow:
@@ -62,6 +53,10 @@ class MainWindow:
         self.reg_proxies = Queue()
         self.bind_proxies = Queue()
 
+        self.number_countries = {}
+
+        self.start_time = time.time()
+
         self.proxy_broker = None
 
         self.manifest_path = ''
@@ -69,7 +64,15 @@ class MainWindow:
         self.email_boxes_path = ''
         self.proxy_path = ''
         self.proxy_urls_path = ''
+        self.real_names_path = ''
+        self.countries_path = ''
+        self.avatars_path = ''
+        self.statuses_path = ''
 
+        self.real_names = []
+        self.countries = []
+        self.avatars = []
+        self.statuses = []
         self.proxy_data = []
         self.proxy_urls = []
         self.privacy_settings = {}
@@ -82,9 +85,15 @@ class MainWindow:
         self.mobile_bind = IntVar()
         self.fold_accounts = IntVar()
         self.temp_mail = IntVar()
+        self.selection_type = IntVar()
+        self.selection_type.set(int(SelectionType.RANDOM))
+        self.sms_service_type = IntVar()
+        self.sms_service_type.set(int(SmsService.OnlineSim))
+        self.captcha_service_type = IntVar()
+        self.captcha_service_type.set(int(CaptchaService.RuCaptcha))
 
         self.onlinesim_api_key = StringVar()
-        self.rucaptcha_api_key = StringVar()
+        self.captcha_api_key = StringVar()
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
         self.amount_of_binders = IntVar()
@@ -92,13 +101,49 @@ class MainWindow:
         self.private_email_boxes = IntVar()
         self.status_bar = StringVar()
         self.country_code = StringVar()
-        self.country_code.set('7')
+        self.country_code.set('Россия')
         self.proxy_type = IntVar()
         self.use_local_ip = IntVar()
         self.pass_login_captcha = IntVar()
+        self.captcha_host = StringVar()
+        self.onlinesim_host = StringVar()
 
-        self.accounts_registrated = StringVar()
-        self.accounts_registrated.set("Аккаунтов зарегистрировано: 0")
+        self.accounts_registrated_stat = StringVar()
+        self.accounts_registrated_stat.set("Аккаунтов зарегистрировано:")
+        self.accounts_binded_stat = StringVar()
+        self.accounts_binded_stat.set("Аккаунтов привязано:")
+        self.captcha_balance_stat = StringVar()
+        self.captcha_balance_stat.set("Баланс CAPTCHA сервиса:")
+        self.captchas_resolved_stat = StringVar()
+        self.captchas_resolved_stat.set("Капч решено успешно:")
+        self.captchas_failed_stat = StringVar()
+        self.captchas_failed_stat.set("Капч не удалось решить:")
+        self.captchas_expenses_stat = StringVar()
+        self.captchas_expenses_stat.set("Потрачено на капчи:")
+        self.numbers_used_stat = StringVar()
+        self.numbers_used_stat.set("Использовано номеров:")
+        self.onlinesim_balance_stat = StringVar()
+        self.onlinesim_balance_stat.set("Баланс SIM сервиса:")
+        self.numbers_failed_stat = StringVar()
+        self.numbers_failed_stat.set("Недействительных номеров:")
+        self.numbers_expenses_stat = StringVar()
+        self.numbers_expenses_stat.set("Потрачено на SIM номера:")
+        self.accounts_unregistrated_stat = StringVar()
+        self.accounts_unregistrated_stat.set("Осталось аккаунтов зарегистрировать:")
+        self.accounts_unbinded_stat = StringVar()
+        self.accounts_unbinded_stat.set("Осталось аккаунтов привязать:")
+        self.proxies_loaded_stat = StringVar()
+        self.proxies_loaded_stat.set("Прокси в очереди:")
+        self.proxies_limited_stat = StringVar()
+        self.proxies_limited_stat.set("Прокси залимичено Steam:")
+        self.proxies_bad_stat = StringVar()
+        self.proxies_bad_stat.set("Недействительных прокси:")
+        self.time_stat = StringVar()
+        self.time_stat.set("Времени прошло: 0")
+
+        self.login_template = StringVar()
+        self.nickname_template = StringVar()
+        self.passwd_template = StringVar()
 
         self.menubar = Menu(parent)
         parent['menu'] = self.menubar
@@ -106,24 +151,16 @@ class MainWindow:
         self.accounts_per_number_label = Label(self.frame, text='Количество аккаунтов на 1 номер:')
         self.accounts_per_number_entry = Entry(self.frame, textvariable=self.accounts_per_number,
                                                width=2, disabledforeground='#808080')
-        self.onlinesim_apikey_label = Label(self.frame, text='onlinesim api key:')
-        self.onlinesim_apikey_entry = Entry(self.frame, textvariable=self.onlinesim_api_key, disabledforeground='#808080', width=25)
+
+        self.onlinesim_settings_bttn = Button(self.frame, text='Настроить сервис онлайн номеров',
+                                              command=self.deploy_onlinenum_window, bg='#CEC8C8', relief=GROOVE)
 
         self.new_accounts_amount_label = Label(self.frame, text='Количество аккаунтов для регистрации:')
         self.new_accounts_amount_entry = Entry(self.frame, textvariable=self.new_accounts_amount, width=4,
                                                disabledforeground='#808080')
-        self.rucaptcha_apikey_label = Label(self.frame, text='rucaptcha api key:')
-        self.rucaptcha_apikey_entry = Entry(self.frame, textvariable=self.rucaptcha_api_key,
-                                            disabledforeground='#808080', width=25)
 
-        self.country_code_label = Label(self.frame, text='Страна номера:')
-        self.russia_option = Radiobutton(self.frame, text="Россия", variable=self.country_code, value="7")
-        self.china_option = Radiobutton(self.frame, text="Китай", variable=self.country_code, value="86")
-        self.nigeria_option = Radiobutton(self.frame, text="Нигерия", variable=self.country_code, value="234")
-        self.kotdivuar_option = Radiobutton(self.frame, text="Кот д'ивуар", variable=self.country_code, value="225")
-        self.ukraine_option = Radiobutton(self.frame, text="Украина", variable=self.country_code, value="380")
-        self.kazakhstan_option = Radiobutton(self.frame, text="Казахстан", variable=self.country_code, value="77")
-        self.egypt_option = Radiobutton(self.frame, text="Египет", variable=self.country_code, value="20")
+        self.captcha_settings_bttn = Button(self.frame, text='Настроить капча сервис',
+                                            command=self.deploy_captcha_window, bg='#CEC8C8', relief=GROOVE)
 
         tools_frame = Frame(self.parent)
         self.tools_label = Label(tools_frame, text='Инструменты:')
@@ -182,17 +219,20 @@ class MainWindow:
 
     def set_states(self):
         for checkbutton_name, configs in sorted(STATES.items(), key=lambda item: item[1]["priority"]):
-            flag = self.__getattribute__(checkbutton_name).get()
-            for entry, state in configs.get("entries", {}).items():
-                state = self.adjust_state(flag, state)
-                self.__getattribute__(entry).configure(state=state)
-            for menu_item, states in configs.get("menubar", {}).items():
-                for menu_index, state in states.items():
+            try:
+                flag = self.__getattribute__(checkbutton_name).get()
+                for entry, state in configs.get("entries", {}).items():
                     state = self.adjust_state(flag, state)
-                    self.__getattribute__(menu_item).entryconfig(menu_index, state=state)
-            for checkbutton_attr, state in configs.get("checkbuttons", {}).items():
-                state = self.adjust_state(flag, state)
-                self.__getattribute__(checkbutton_attr).configure(state=state)
+                    self.__getattribute__(entry).configure(state=state)
+                for menu_item, states in configs.get("menubar", {}).items():
+                    for menu_index, state in states.items():
+                        state = self.adjust_state(flag, state)
+                        self.__getattribute__(menu_item).entryconfig(menu_index, state=state)
+                for checkbutton_attr, state in configs.get("checkbuttons", {}).items():
+                    state = self.adjust_state(flag, state)
+                    self.__getattribute__(checkbutton_attr).configure(state=state)
+            except AttributeError:
+                continue
 
     @staticmethod
     def adjust_state(flag, state):
@@ -224,28 +264,17 @@ class MainWindow:
 
         self.menubar.add_cascade(label="Открыть статистику", command=self.deploy_stats_window)
 
-        self.onlinesim_apikey_label.grid(row=0, column=0, pady=5, sticky=W)
-        self.onlinesim_apikey_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
+        self.menubar.add_cascade(label="Задать шаблон", command=self.deploy_template_window)
 
-        self.rucaptcha_apikey_label.grid(row=1, column=0, pady=5, sticky=W)
-        self.rucaptcha_apikey_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
+        self.onlinesim_settings_bttn.grid(row=0, column=0, padx=3, pady=5, sticky=W)
 
-        self.rucaptcha_apikey_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
+        self.captcha_settings_bttn.grid(row=1, column=0, padx=3, pady=5, sticky=W)
 
         self.new_accounts_amount_label.grid(row=2, column=0, pady=5, sticky=W)
         self.new_accounts_amount_entry.grid(row=2, column=1, pady=5, padx=5, sticky=W)
 
         self.accounts_per_number_label.grid(row=3, column=0, pady=5, sticky=W)
         self.accounts_per_number_entry.grid(row=3, column=1, pady=5, padx=5, sticky=W)
-
-        self.country_code_label.grid(row=4, column=0, pady=3, sticky=W)
-        self.russia_option.grid(row=5, padx=3, column=0, pady=3, sticky=W)
-        self.ukraine_option.grid(row=5, column=0, pady=3, sticky=E, padx=47)
-        self.egypt_option.grid(row=5, column=1, pady=3, sticky=W)
-        self.nigeria_option.grid(row=5, column=1, pady=3, sticky=E)
-        self.china_option.grid(row=6, column=0, pady=3, padx=3, sticky=W)
-        self.kazakhstan_option.grid(row=6, column=0, pady=3, padx=40, sticky=E)
-        self.kotdivuar_option.grid(row=6, column=1, pady=3, sticky=W)
 
         self.tools_label.grid(row=0, column=0, pady=3, sticky=W)
         self.autoreg_checkbutton.grid(row=1, column=0, sticky=W)
@@ -271,20 +300,110 @@ class MainWindow:
         top = Toplevel(master=self.frame)
         top.title("Статистика")
         top.iconbitmap('database/stats.ico')
-        top.geometry('550x355')
+        top.geometry('490x455')
 
-        lbl = Label(top, textvariable=self.accounts_registrated)
-        lbl.grid(row=0, column=0, padx=5, pady=10, sticky=W)
+        lbl14 = Label(top, text="Аккаунты")
+        lbl14.grid(row=0, column=0, padx=5, pady=5, sticky=W)
 
-        self.accounts_binded = StringVar()
-        lbl2 = Label(top, textvariable=self.accounts_binded)
-        lbl2.grid(row=1, column=0, padx=5, pady=10, sticky=W)
-        self.accounts_binded.set("Аккаунтов привязано: 0")
+        lbl = Label(top, textvariable=self.accounts_registrated_stat)
+        lbl.grid(row=1, column=0, padx=5, pady=5, sticky=W)
 
-        self.captchas_resolved = StringVar()
-        lbl3 = Label(top, textvariable=self.captchas_resolved)
+        lbl2 = Label(top, textvariable=self.accounts_binded_stat)
+        lbl2.grid(row=1, column=1, padx=5, pady=5, sticky=W)
+
+        lbl3 = Label(top, textvariable=self.accounts_unregistrated_stat)
         lbl3.grid(row=2, column=0, padx=5, pady=10, sticky=W)
-        self.captchas_resolved.set("Капч решено успешно: 0")
+
+        lbl4 = Label(top, textvariable=self.accounts_unbinded_stat)
+        lbl4.grid(row=2, column=1, padx=5, pady=10, sticky=W)
+
+        lbl13 = Label(top, text="Капчи")
+        lbl13.grid(row=3, column=0, padx=5, pady=5, sticky=W)
+
+        lbl16 = Label(top, textvariable=self.captcha_balance_stat)
+        lbl16.grid(row=4, column=0, padx=5, pady=5, sticky=W)
+
+        lbl5 = Label(top, textvariable=self.captchas_resolved_stat)
+        lbl5.grid(row=4, column=1, padx=5, pady=5, sticky=W)
+
+        lbl6 = Label(top, textvariable=self.captchas_failed_stat)
+        lbl6.grid(row=5, column=0, padx=5, pady=5, sticky=W)
+
+        lbl7 = Label(top, textvariable=self.captchas_expenses_stat)
+        lbl7.grid(row=5, column=1, padx=5, pady=10, sticky=W)
+
+        lbl15 = Label(top, text="Номера")
+        lbl15.grid(row=6, column=0, padx=5, pady=5, sticky=W)
+
+        Label(top, textvariable=self.onlinesim_balance_stat).grid(row=7, column=0, padx=5, pady=5, sticky=W)
+
+        lbl8 = Label(top, textvariable=self.numbers_expenses_stat)
+        lbl8.grid(row=7, column=1, padx=5, pady=5, sticky=W)
+
+        lbl8 = Label(top, textvariable=self.numbers_used_stat)
+        lbl8.grid(row=8, column=0, padx=5, pady=5, sticky=W)
+
+        lbl8 = Label(top, textvariable=self.numbers_failed_stat)
+        lbl8.grid(row=8, column=1, padx=5, pady=10, sticky=W)
+
+        lbl16 = Label(top, text="Прокси")
+        lbl16.grid(row=9, column=0, padx=5, pady=5, sticky=W)
+
+        lbl9 = Label(top, textvariable=self.proxies_loaded_stat)
+        lbl9.grid(row=10, column=0, padx=5, pady=5, sticky=W)
+
+        lbl10 = Label(top, textvariable=self.proxies_limited_stat)
+        lbl10.grid(row=10, column=1, padx=5, pady=5, sticky=W)
+
+        lbl11 = Label(top, textvariable=self.proxies_bad_stat)
+        lbl11.grid(row=11, column=1, padx=5, pady=10, sticky=W)
+
+        lbl12 = Label(top, textvariable=self.time_stat)
+        lbl12.grid(row=12, column=0, padx=5, pady=15, sticky=W)
+
+    def deploy_template_window(self):
+        top = Toplevel(master=self.frame)
+        top.title("Шаблоны")
+        top.geometry('420x420')
+        Label(top, text="Шаблон для логина:").grid(row=0, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.login_template, width=20)\
+            .grid(row=0, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Шаблон для пароля:").grid(row=1, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.passwd_template, width=20)\
+            .grid(row=1, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Шаблон для никнейма профиля:").grid(row=2, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.nickname_template, width=20)\
+            .grid(row=2, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Выборка элементов списка:").grid(row=3, column=0, padx=5, pady=5, sticky=W)
+        rbttn = Radiobutton(top, text="Рандомная", variable=self.selection_type, value=SelectionType.RANDOM)
+        rbttn.grid(column=0, row=4, padx=5, pady=5, sticky=W)
+        rbttn2 = Radiobutton(top, text="Последовательная", variable=self.selection_type, value=SelectionType.CONSISTENT)
+        rbttn2.grid(column=1, row=4, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Реальные имена:").grid(row=5, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, self.real_names_path, "Real names", self.real_names, r".+\n"))\
+            .grid(row=5, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Страны:").grid(row=6, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, self.countries_path, "Countries", self.countries, r"\w\w\n"))\
+            .grid(row=6, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Аватары:").grid(row=7, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, self.avatars_path, "Avatars", self.avatars, r"https?://.+\n"))\
+            .grid(row=7, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Статусы:").grid(row=8, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, self.statuses_path, "Statuses", self.statuses, r".+\n"))\
+            .grid(row=8, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Примеры шаблона логина (пароля и никнейма):\nmy{num}login либо qwerty{num},\n"
+                        "где num автоматически преобразуется программой в порядковое число\n\n"
+                        "Страны указываются в формате ISO 3166-1 Alpha 2 (например: RU, US)\n\n"
+                        "Аватары: URL ссылки на изображения")\
+            .grid(row=9, columnspan=2, padx=5, pady=5, sticky=W)
 
     def add_log(self, message):
         self.log_box.insert(END, message)
@@ -301,18 +420,24 @@ class MainWindow:
         self.save_input()
         new_accounts_amount = self.new_accounts_amount.get()
         onlinesim_api_key = self.onlinesim_api_key.get()
+        sim_host = self.onlinesim_host.get()
         reg_threads = []
         bind_threads = []
         if self.mobile_bind.get():
-            sms_service = OnlineSimApi(onlinesim_api_key)
+            if self.sms_service_type == SmsService.OnlineSim:
+                sms_service = OnlineSimApi(onlinesim_api_key, sim_host)
+            elif self.sms_service_type == SmsService.SmsActivate:
+                sms_service = SmsActivateApi(onlinesim_api_key, sim_host)
             for _ in range(self.amount_of_binders.get()):
                 t = Binder(self, sms_service, self.accounts_per_number.get())
                 t.start()
                 bind_threads.append(t)
         if self.autoreg.get():
             reg_threads = self.init_threads(new_accounts_amount)
+            Binder.total_amount = self.new_accounts_amount.get()
         else:
             self.put_from_text_file()
+            Binder.total_amount = len(self.old_accounts)
 
         for thread in reg_threads:
             thread.join()
@@ -342,9 +467,13 @@ class MainWindow:
 
         if self.autoreg.get():
             try:
-                self.check_rucaptcha_key()
-            except RuCaptchaError as err:
-                showwarning("Ошибка RuCaptcha", err, parent=self.parent)
+                self.check_templates()
+            except ValueError as err:
+                showwarning("Ошибка в шаблоне", err, parent=self.parent)
+            try:
+                self.check_captcha_key()
+            except Exception as err:
+                showwarning("Ошибка Captcha", err, parent=self.parent)
                 return False
             try:
                 if self.new_accounts_amount.get() <= 0:
@@ -387,8 +516,9 @@ class MainWindow:
         return True
 
     def save_input(self):
+        exceptions = ('status_bar', 'license', 'stat')
         for field, value in self.__dict__.items():
-            if field in ('status_bar', 'license'):
+            if list(filter(lambda exception: exception in field, exceptions)):
                 continue
             if issubclass(value.__class__, Variable) or 'path' in field:
                 try:
@@ -492,6 +622,7 @@ class MainWindow:
         if not self.proxy_type.get():
             return
         pass_login_captcha = self.pass_login_captcha.get()
+        ctr = 0
         while True:
             proxy = await self.queue.get()
             if proxy is None:
@@ -508,6 +639,8 @@ class MainWindow:
 
             self.reg_proxies.put(proxy)
             self.bind_proxies.put(proxy)
+            ctr += 1
+            self.proxies_loaded_stat.set("Прокси в очереди: %d" % ctr)
 
     def deploy_proxy_widget(self):
         def set_state():
@@ -566,18 +699,87 @@ class MainWindow:
         set_state()
         top.focus_set()
 
-    def check_rucaptcha_key(self):
-        if not self.rucaptcha_api_key.get():
-            raise RuCaptchaError('Не указан api ключ RuCaptcha')
+    def deploy_onlinenum_window(self):
+        def deploy_countries_list(event=True):
+            self.number_countries.clear()
+            if self.sms_service_type.get() == SmsService.SmsActivate:
+                countries_string = "0 - Россия, 1 - Украина, 2 - Казахстан, 3 - Китай, 4 - Филиппины, 5 - Мьянма, " \
+                                   "6 - Индонезия, 7 - Малайзия, 8 - Кения, 9 - Танзания, 10 - Вьетнам, 11 - Кыргызстан," \
+                                   " 12 - США, 13 - Израиль, 14 - Гонконг, 15 - Польша, 16 - Великобритания, " \
+                                   "17 - Мадагаскар, 18 - Конго, 19 - Нигерия, 20 - Макао, 21 - Египет, 23 - Ирландия, " \
+                                   "24 - Камбоджа"
+                for item in countries_string.split(","):
+                    value, delimiter, country = item.partition(" - ")
+                    self.number_countries[country] = value
 
-        resp = requests.post('http://rucaptcha.com/res.php',
-                             data={'key': self.rucaptcha_api_key.get().strip(),
-                                   'action': 'getbalance'})
-        logger.info(resp.text)
-        if 'ERROR_ZERO_BALANCE' in resp.text:
-            raise RuCaptchaError('На счету нулевой баланс')
-        elif 'ERROR_WRONG_USER_KEY' in resp.text or 'ERROR_KEY_DOES_NOT_EXIST' in resp.text:
-            raise RuCaptchaError('Неправильно введен API ключ')
+            elif self.sms_service_type.get() == SmsService.OnlineSim:
+                self.number_countries = {
+                    "Россия": "7",
+                    "Китай": "86",
+                    "Нигерия": "234",
+                    "Кот д'ивуар": "225",
+                    "Украина": "380",
+                    "Казахстан": "77",
+                    "Египет": "20"
+                }
+
+            if event:
+                self.country_code.set("Россия")
+
+            OptionMenu(top, self.country_code, *sorted(self.number_countries.keys())) \
+                .grid(row=5, padx=5, pady=5, sticky=W)
+
+        top = Toplevel(master=self.frame)
+        top.title("Настройка сервиса онлайн номеров")
+        top.iconbitmap('database/sim.ico')
+
+        Label(top, text='Сервис:').grid(row=0, column=0, pady=5, padx=5, sticky=W)
+        Radiobutton(top, text='OnlineSim', variable=self.sms_service_type, value=int(SmsService.OnlineSim),
+                    command=deploy_countries_list).grid(row=1, column=0, pady=5, padx=5, sticky=W)
+        Radiobutton(top, text='SMS Activate', variable=self.sms_service_type, value=int(SmsService.SmsActivate),
+                    command=deploy_countries_list).grid(row=1, column=1, pady=5, padx=5, sticky=W)
+
+        Label(top, text='api key:').grid(row=2, column=0, pady=5, padx=5, sticky=W)
+        Entry(top, textvariable=self.onlinesim_api_key, width=33)\
+            .grid(row=2, column=1, columnspan=2, pady=5, padx=5, sticky=W)
+
+        Label(top, text='Host:').grid(row=3, column=0, pady=5, padx=5, sticky=W)
+        Entry(top, textvariable=self.onlinesim_host, width=33)\
+            .grid(row=3, column=1, columnspan=2, pady=5, padx=5, sticky=W)
+
+        Label(top, text='Страна номера:').grid(row=4, column=0, pady=3, sticky=W)
+        deploy_countries_list(event=False)
+
+        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=3, row=6, padx=5, pady=5)
+
+    def deploy_captcha_window(self):
+        top = Toplevel(master=self.frame)
+        top.title("Настройка капчи сервиса")
+        top.iconbitmap('database/captcha.ico')
+
+        Label(top, text='Сервис:').grid(row=0, column=0, pady=5, padx=5, sticky=W)
+        Radiobutton(top, text='RuCaptcha', variable=self.captcha_service_type, value=int(CaptchaService.RuCaptcha))\
+            .grid(row=1, column=0, pady=5, padx=5, sticky=W)
+        Radiobutton(top, text='AntiCaptcha', variable=self.captcha_service_type, value=int(CaptchaService.AntiCaptcha))\
+            .grid(row=1, column=1, pady=5, padx=5, sticky=W)
+
+        Label(top, text='api key:').grid(row=2, column=0, pady=5, padx=5, sticky=W)
+        Entry(top, textvariable=self.captcha_api_key, width=33) \
+            .grid(row=2, column=1, columnspan=2, pady=5, padx=5, sticky=W)
+
+        Label(top, text='Host:').grid(row=3, column=0, pady=5, padx=5, sticky=W)
+        Entry(top, textvariable=self.captcha_host, width=33) \
+            .grid(row=3, column=1, columnspan=2, pady=5, padx=5, sticky=W)
+
+        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=3, row=4, padx=5, pady=5)
+
+    def check_captcha_key(self):
+        if not self.captcha_api_key.get():
+            showwarning("Ошибка", 'Не указан api ключ Captcha сервиса')
+            return
+
+        balance = steamreg.captcha_service.get_balance()
+        self.captcha_balance_stat.set("Баланс CAPTCHA сервиса: %s" % balance)
 
     def get_node(self):
         # hardware = wmi.WMI()
@@ -597,6 +799,7 @@ class MainWindow:
             return
         if not self.check_input():
             return
+        self.update_clock()
         self.is_running = True
         t = threading.Thread(target=self.init_proxy_producing)
         t.daemon = True
@@ -705,6 +908,18 @@ class MainWindow:
         self.proxy_urls_path = self.load_file(proxy_urls_path, self.proxy_urls)
         window.destroy()
 
+    def file_open(self, window, path, title, collection, regexr=None):
+        dir_ = (os.path.dirname(path)
+                if path is not None else '.')
+        input_path = askopenfilename(
+            title=title,
+            initialdir=dir_,
+            filetypes=[('Text file (.txt)', '*.txt')],
+            defaultextension='.txt', parent=window)
+
+        path = self.load_file(input_path, collection, regexr)
+        window.destroy()
+
     def load_file(self, path, data, regexr=None):
         if not path:
             return ''
@@ -723,102 +938,166 @@ class MainWindow:
             self.status_bar.set("Файл загружен: %s" % os.path.basename(path))
             return path
 
+    def update_clock(self):
+        now = time.strftime("%H:%M:%S", time.gmtime(time.time() - self.start_time))
+        self.time_stat.set("Времени прошло: %s" % now)
+        self.parent.after(1000, self.update_clock)
+
     def app_quit(self, *ignore):
         with open('database/userdata.txt', 'w') as f:
             json.dump(self.userdata, f)
 
+        steamreg.counters_db.sync()
+        steamreg.counters_db.close()
+
         self.parent.destroy()
+
+    def check_templates(self):
+        for template in (self.login_template, self.passwd_template, self.nickname_template):
+            value = template.get()
+            if value and "{num}" not in value:
+                raise ValueError("Неверно задан шаблон: " + value)
 
 
 class RegistrationThread(threading.Thread):
 
     left = 0
     counter = 0
+    proxy_limited = 0
+    proxy_invalid = 0
+
     error = False
+
     lock = threading.Lock()
     email_lock = threading.Lock()
+
     is_alive = True
 
     def __init__(self, window):
         super().__init__()
         self.daemon = True
 
-        self.window = window
+        self.client = window
         self.proxy = None
 
     def run(self):
         self.set_proxy()
-        while RegistrationThread.left > 0:
-            with RegistrationThread.lock:
-                RegistrationThread.left -= 1
+        while self.left > 0:
+            with self.lock:
+                self.left -= 1
             try:
                 self.registrate_account()
             except (ProxyError, ConnectionError, Timeout):
-                self.window.add_log("Нестабильное соединение: %s" % (self.proxy if self.proxy else "local ip"))
+                self.client.add_log("Нестабильное соединение: %s" % (self.proxy if self.proxy else "local ip"))
                 self.set_proxy()
-                with RegistrationThread.lock:
-                    RegistrationThread.left += 1
+                with self.lock:
+                    self.left += 1
+                self.proxy_invalid += 1
+                self.client.proxies_bad_stat.set("Недействительных прокси: %d" % self.proxy_limited)
             except Exception as err:
-                with RegistrationThread.lock:
-                    if not RegistrationThread.error:
+                with self.lock:
+                    if not self.error:
                         showwarning("Ошибка %s" % err.__class__.__name__, err)
                         logger.critical(traceback.format_exc())
-                        RegistrationThread.error = True
+                        self.error = True
                 return
+            if self.counter % 50 == 0:
+                self.client.check_captcha_key()
+            self.client.check_captcha_key()
 
     def registrate_account(self):
-        self.window.status_bar.set('Создаю аккаунты, решаю капчи...')
-        # try:
-        #     login, passwd, email, email_password = steamreg.create_account_web(self.window.rucaptcha_api_key.get().strip(),
-        #                                                                        RegistrationThread.email_lock, self.proxy)
-        # except LimitReached as err:
-        #     logging.error(err)
-        #     if self.proxy:
-        #         self.window.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
-        #     else:
-        #         self.window.add_log("Достигнут лимит регистрации аккаунов для local ip.")
-        #     return
-        #
-        # logger.info('Аккаунт: %s:%s', login, passwd)
-        # self.window.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, passwd))
-        #
-        # with RegistrationThread.lock:
-        #     self.save_unattached_account(login, passwd, email, email_password)
-        # try:
-        #     steam_client = steamreg.login(login, passwd, self.window.rucaptcha_api_key.get(), self.proxy,
-        #                                   pass_login_captcha=self.window.pass_login_captcha.get())
-        # except AuthException as err:
-        #     logger.error(err)
-        #     self.window.add_log("%s: не удается авторизоваться с этого айпи"
-        #                         % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
-        #     self.set_proxy()
-        #     return
-        # except SteamAuthError as err:
-        #     logger.error(err)
-        #     self.window.add_log(err)
-        #     return
-        # except CaptchaRequired as err:
-        #     logger.error(err)
-        #     self.window.add_log("%s: требуется решить капчу для авторизации в аккаунты"
-        #                         % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
-        #     self.set_proxy()
-        #     return
-        # steamreg.activate_account(steam_client)
-        # steamreg.edit_profile(steam_client)
-        # self.window.add_log("Профиль активирован: %s:%s" % (login, passwd))
-        # account = Account(login, passwd, email, email_password)
-        # self.window.accounts.put(account)
-        RegistrationThread.counter += 1
-        self.window.accounts_registrated.set("Аккаунтов зарегистрировано: %d" % RegistrationThread.counter)
+        self.client.status_bar.set('Создаю аккаунты, решаю капчи...')
+        try:
+            login, passwd, email, email_password = steamreg.create_account_web(self.client.captcha_api_key.get().strip(),
+                                                                               self.email_lock, self.proxy)
+        except LimitReached as err:
+            logging.error(err)
+            if self.proxy:
+                self.client.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
+            else:
+                self.client.add_log("Достигнут лимит регистрации аккаунтов для local ip.")
+            self.proxy_limited += 1
+            self.client.proxies_limited_stat.set("Прокси залимичено Steam: %d" % self.proxy_limited)
+            return
+
+        logger.info('Аккаунт: %s:%s', login, passwd)
+        self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, passwd))
+
+        with self.lock:
+            self.save_unattached_account(login, passwd, email, email_password)
+        try:
+            steam_client = steamreg.login(login, passwd, self.client.captcha_api_key.get(), self.proxy, self.client,
+                                          pass_login_captcha=self.client.pass_login_captcha.get())
+        except AuthException as err:
+            logger.error(err)
+            self.client.add_log("%s: не удается авторизоваться с этого айпи"
+                                % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
+            self.set_proxy()
+            return
+        except SteamAuthError as err:
+            logger.error(err)
+            self.client.add_log(err)
+            return
+        except CaptchaRequired as err:
+            logger.error(err)
+            self.client.add_log("%s: требуется решить капчу для авторизации в аккаунты"
+                                % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
+            self.set_proxy()
+            return
+
+        if self.client.selection_type == SelectionType.RANDOM:
+            summary = random.choice(self.client.statuses)
+            real_name = random.choice(self.client.real_names)
+            country = random.choice(self.client.countries)
+        elif self.client.selection_type == SelectionType.CONSISTENT:
+            summary = self.client.statuses.pop()
+            self.client.statuses.append(summary)
+            real_name = self.client.real_names.pop()
+            self.client.real_names.append(real_name)
+            country = self.client.countries.pop()
+            self.client.countries.append(country)
+
+        steamreg.activate_account(steam_client, summary, real_name, country)
+        steamreg.edit_profile(steam_client)
+        if self.client.avatars:
+            if self.client.selection_type == SelectionType.RANDOM:
+                avatar = random.choice(self.client.avatars)
+            elif self.client.selection_type == SelectionType.CONSISTENT:
+                avatar = self.client.avatars.pop()
+
+            if re.match(r"https?://.+", str(avatar)).group() is not None:  # str(avatar) if avatar is bytes object
+                avatar_link = avatar
+                avatar = requests.get(avatar_link).content
+                try:
+                    self.client.avatars.remove(avatar_link)
+                except ValueError:
+                    pass
+                self.client.avatars.append(avatar)
+
+            steamreg.upload_avatar(steam_client, avatar)
+
+        self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
+        account = Account(login, passwd, email, email_password)
+        self.client.accounts.put(account)
+        self.counter += 1
+        self.client.accounts_registrated_stat.set("Аккаунтов зарегистрировано: %d" % self.counter)
+        self.client.accounts_registrated_stat.set("Осталось аккаунтов зарегистрировать : %d" %
+                                                  (self.client.new_accounts_amount.get() - self.counter))
 
     def set_proxy(self):
         if self.proxy is not None:
             self.proxy.close()
-        proxy = self.window.reg_proxies.get()
+
+        proxy = None
+        try:
+            proxy = self.client.reg_proxies.get(timeout=60)
+        except Empty:
+            quit()
+
         if proxy:
-            self.window.add_log("Regger: " + str(proxy).strip("<>"))
+            self.client.add_log("Regger: " + str(proxy).strip("<>"))
         else:
-            self.window.add_log("Regger: Использую local ip")
+            self.client.add_log("Regger: Использую local ip")
         self.proxy = proxy
 
     @staticmethod
@@ -834,12 +1113,17 @@ class RegistrationThread(threading.Thread):
 class Binder(threading.Thread):
 
     lock = threading.Lock()
-    counter = 0
+
+    binded_counter = 0
+    binding_total = 0
+    numbers_ordered_counter = 0
+    numbers_failed_counter = 0
+
     error = False
 
     def __init__(self, window, sms_service, amount):
         super().__init__()
-        self.window = window
+        self.client = window
         self.amount = amount
         self.sms_service = sms_service
         self.number = None
@@ -850,36 +1134,40 @@ class Binder(threading.Thread):
         self.set_proxy()
         while True:
             pack = []
-            with Binder.lock:
+            with self.lock:
                 self.fill_pack(pack)
             if not pack:
                 return
+
             try:
-                with Binder.lock:
+                with self.lock:
                     self.get_new_number()
+
                 for account in pack:
                     while True:
                         try:
                             self.bind_account(account)
                             break
                         except (ProxyError, ConnectionError, Timeout):
-                            self.window.add_log("Нестабильное соединение: %s"
+                            self.client.add_log("Нестабильное соединение: %s"
                                                 % (self.proxy if self.proxy else "local ip"))
                             self.set_proxy()
+                self.client.onlinesim_balance_stat.set("Баланс SIM сервиса: %s" % self.sms_service.get_balance())
             except Exception as err:
-                with Binder.lock:
-                    if not Binder.error:
+                with self.lock:
+                    if not self.error:
                         showwarning("Ошибка %s" % err.__class__.__name__, err)
                         logger.critical(traceback.format_exc())
-                        Binder.error = True
+                        self.error = True
                 return
+
             self.sms_service.set_operation_ok(self.number['tzid'])
 
     def fill_pack(self, pack):
         for _ in range(self.amount):
             while True:
                 try:
-                    account = self.window.accounts.get(timeout=30)
+                    account = self.client.accounts.get(timeout=30)
                     pack.append(account)
                     break
                 except Empty:
@@ -887,18 +1175,18 @@ class Binder(threading.Thread):
                         return
 
     def bind_account(self, account):
-        self.window.status_bar.set('Делаю привязку Mobile Guard...')
+        self.client.status_bar.set('Делаю привязку Mobile Guard...')
         login, passwd = account.login, account.password
         logger.info('Аккаунт: %s:%s', login, passwd)
         insert_log = self.log_wrapper(login)
         insert_log('Номер: ' + self.number['number'])
         insert_log('Логинюсь в аккаунт')
         try:
-            steam_client = steamreg.mobile_login(login, passwd, self.window.rucaptcha_api_key.get(), self.proxy,
-                                                 pass_login_captcha=self.window.pass_login_captcha.get())
+            steam_client = steamreg.mobile_login(login, passwd, self.client.captcha_api_key.get(), self.proxy,
+                                                 pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
-            self.window.add_log("%s: не удается авторизоваться с этого айпи"
+            self.client.add_log("%s: не удается авторизоваться с этого айпи"
                                 % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
             self.set_proxy()
             return
@@ -922,17 +1210,20 @@ class Binder(threading.Thread):
             error = 'Не удается привязать номер к аккаунту: %s. Ошибка: %s' % (login, err)
             logger.error(error)
             insert_log(error)
+            self.numbers_failed_counter += 1
+            self.client.numbers_failed_stat.set("Недействительных номеров: %s" % self.numbers_failed_counter)
             return
         steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
         mobguard_data['account_password'] = passwd
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
-        if not self.window.autoreg.get():
+        if not self.client.autoreg.get():
             steamreg.activate_account(steam_client)
             steamreg.edit_profile(steam_client)
         insert_log('Guard успешно привязан')
-        Binder.counter += 1
-        self.window.accounts_binder.set("Аккаунтов привязано: %d" % Binder.counter)
+        self.binded_counter += 1
+        self.client.accounts_binder.set("Аккаунтов привязано: %d" % self.binded_counter)
+        self.client.accounts_binder.set("Осталось аккаунтов привязать: %d" % (self.binding_total - self.binded_counter))
 
     def add_authenticator(self, insert_log, steam_client):
         while True:
@@ -962,7 +1253,7 @@ class Binder(threading.Thread):
                         success = True
                         break
                     time.sleep(4)
-            except OnlineSimError as err:
+            except (OnlineSimError, SmsActivateError) as err:
                 insert_log("Ошибка onlinesim: %s" % err)
                 self.get_new_number(self.number['tzid'])
                 insert_log('Новый номер: ' + self.number['number'])
@@ -987,18 +1278,20 @@ class Binder(threading.Thread):
             self.sms_service.set_operation_ok(tzid)
             self.used_codes.clear()
         is_repeated = False
-        tzid = self.sms_service.request_new_number(country=self.window.country_code.get())
-        number = self.sms_service.get_number(tzid)
+        self.numbers_ordered_counter += 1
+        self.client.numbers_used_stat.set("Использовано номеров: %s" % self.numbers_ordered_counter)
+        tzid, number = self.sms_service.get_number(country=self.client.number_countries[self.client.country_code.get()])
         self.number = {'tzid': tzid, 'number': number, 'is_repeated': is_repeated}
 
     def save_attached_account(self, mobguard_data, account, number, offer_link):
-        if self.window.autoreg.get():
+        if self.client.autoreg.get():
             accounts_dir = 'новые_аккаунты'
-            if self.window.fold_accounts.get():
-                accounts_dir = os.path.join(accounts_dir, account.login)
-                os.makedirs(accounts_dir)
         else:
             accounts_dir = 'загруженные_аккаунты'
+
+        if self.client.fold_accounts.get():
+            accounts_dir = os.path.join(accounts_dir, account.login)
+            os.makedirs(accounts_dir)
 
         steamid = mobguard_data['Session']['SteamID']
         txt_path = os.path.join(accounts_dir, account.login + '.txt')
@@ -1013,17 +1306,17 @@ class Binder(threading.Thread):
         with open('accounts_guard.txt', 'a+') as f:
             f.write('%s:%s\n' % (account.login, account.password))
 
-        if self.window.import_mafile.get():
-            sda_path = os.path.join(os.path.dirname(self.window.manifest_path), account.login + '.maFile')
+        if self.client.import_mafile.get():
+            sda_path = os.path.join(os.path.dirname(self.client.manifest_path), account.login + '.maFile')
             data = {
                 "encryption_iv": None,
                 "encryption_salt": None,
                 "filename": account.login + '.maFile',
                 "steamid": int(steamid)
             }
-            self.window.manifest_data["entries"].append(data)
-            with open(self.window.manifest_path, 'w') as f1, open(sda_path, 'w') as f2:
-                json.dump(self.window.manifest_data, f1)
+            self.client.manifest_data["entries"].append(data)
+            with open(self.client.manifest_path, 'w') as f1, open(sda_path, 'w') as f2:
+                json.dump(self.client.manifest_data, f1)
                 json.dump(mobguard_data, f2, separators=(',', ':'))
 
         with open(mafile_path, 'w') as f:
@@ -1033,25 +1326,29 @@ class Binder(threading.Thread):
         if self.proxy is not None:
             self.proxy.close()
 
-        proxy = self.window.bind_proxies.get()
+        proxy = self.client.bind_proxies.get()
 
         if proxy:
-            self.window.add_log("Binder: " + str(proxy).strip("<>"))
+            self.client.add_log("Binder: " + str(proxy).strip("<>"))
         else:
-            self.window.add_log("Binder: Использую local ip")
+            self.client.add_log("Binder: Использую local ip")
         self.proxy = proxy
 
     def log_wrapper(self, login):
         def insert_log(text):
-            self.window.add_log('%s (%s)' % (text, login))
+            self.client.add_log('%s (%s)' % (text, login))
         return insert_log
 
 
 def launch():
     root = Tk()
     window = MainWindow(root)
+
+    global steamreg
+    steamreg = SteamRegger(window)
+
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v0.92')
+    root.title('Steam Auto Authenticator v1.0.0')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 

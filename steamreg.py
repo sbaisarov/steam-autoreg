@@ -2,30 +2,52 @@ import requests
 import time
 import string
 import random
-import sys
 import re
 import json
+import io
+import sys
 import logging
+import shelve
+
 from websocket import create_connection
 from requests.exceptions import Timeout, ConnectionError, ProxyError
+from python_anticaptcha import AnticaptchaClient, ImageToTextTask
 
 from steampy.client import SteamClient
 from steampy.login import CaptchaRequired, AuthException
 from steampy import guard
 
+from enums import CaptchaService
+
 logger = logging.getLogger('__main__')
 
 
 class SteamAuthError(Exception): pass
-class SteamCaptchaError(Exception): pass
+class SteamRuCaptchaError(Exception): pass
 class RuCaptchaError(Exception): pass
 class LimitReached(Exception): pass
 
 
 class SteamRegger:
 
-    def __init__(self):
-        pass
+    def __init__(self, client):
+        self.client = client
+        self.failed_captchas_counter = 0
+        self.sucessfull_captchas_counter = 0
+        self.captchas_expenses_total = 0
+
+        self.counters_db = shelve.open("database/tmplcounters", writeback=True)
+
+        for key in ("login_counters", "password_counters", "nickname_counters"):
+            if self.counters_db.get(key) is None:
+                self.counters_db[key] = {}
+
+        api_key = self.client.captcha_api_key.get()
+        captcha_host = self.client.captcha_host.get()
+        if self.client.captcha_service_type == CaptchaService.RuCaptcha:
+            self.captcha_service = RuCaptcha(api_key, captcha_host)
+        elif self.client.captcha_service_type == CaptchaService.AntiCaptcha:
+            self.captcha_service = AntiCaptcha(api_key, captcha_host)
 
     @staticmethod
     def request_post(session, url, data={}, timeout=30):
@@ -55,7 +77,7 @@ class SteamRegger:
                 if session.proxies:
                     raise err
 
-    def login(self, login_name, password, rucaptcha_api_key,
+    def login(self, login_name, password, captcha_api_key,
               proxy=None, email=None, email_passwd=None, pass_login_captcha=False):
         steam_client = SteamClient()
         if proxy:
@@ -74,9 +96,13 @@ class SteamRegger:
                 if pass_login_captcha:
                     raise err
                 captcha_gid = err
-                captcha_id = self.generate_captcha(steam_client.session, rucaptcha_api_key,
-                                                   captcha_gid, 'COMMUNITY')
-                captcha_text = self.resolve_captcha(rucaptcha_api_key, captcha_id)
+                captcha_id = self.generate_captcha(steam_client.session, captcha_gid, 'COMMUNITY')
+                captcha_text = self.resolve_captcha(captcha_id)
+                self.failed_captchas_counter += 1
+                self.client.captchas_failed_stat.set("Капч не удалось решить: %d" % self.failed_captchas_counter)
+
+        self.sucessfull_captchas_counter += 1
+        self.client.captchas_resolved_stat.set("Капч решено успешно: %d" % self.sucessfull_captchas_counter)
 
         resp_message = resp.get('message', '')
 
@@ -92,7 +118,7 @@ class SteamRegger:
 
         return steam_client
 
-    def mobile_login(self, login_name, password, rucaptcha_api_key,
+    def mobile_login(self, login_name, password, captcha_api_key,
                      proxy=None, email=None, email_passwd=None, pass_login_captcha=False):
         steam_client = SteamClient()
         if proxy:
@@ -112,9 +138,9 @@ class SteamRegger:
                 if pass_login_captcha:
                     raise err
                 captcha_gid = err
-                captcha_id = self.generate_captcha(steam_client.session, rucaptcha_api_key,
+                captcha_id = self.generate_captcha(steam_client.session, captcha_api_key,
                                                    captcha_gid, 'COMMUNITY')
-                captcha_text = self.resolve_captcha(rucaptcha_api_key, captcha_id)
+                captcha_text = self.resolve_captcha(captcha_id)
 
         resp_message = resp.get('message', '')
 
@@ -281,7 +307,7 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account_web(self, rucaptcha_api_key, thread_lock, proxy=None):
+    def create_account_web(self, captcha_api_key, thread_lock, proxy=None):
         def send_captcha():
             data = {
                 'captchagid': gid,
@@ -289,8 +315,7 @@ class SteamRegger:
                 'email': email,
                 'count': '1'
             }
-            resp = self.request_post(session, 'https://store.steampowered.com/join/verifycaptcha',
-                                       data=data)
+            resp = self.request_post(session, 'https://store.steampowered.com/join/verifycaptcha', data=data)
             logger.info(resp)
             return resp
 
@@ -309,12 +334,12 @@ class SteamRegger:
         while True:
             gid = self.request_get(session, 'https://store.steampowered.com/join/refreshcaptcha/?count=1',
                                    headers={'Host': 'store.steampowered.com'}, timeout=30, is_json=True)['gid']
-            captcha_id = self.generate_captcha(session, rucaptcha_api_key, gid, "STORE")
-            captcha_text = self.resolve_captcha(rucaptcha_api_key, captcha_id)
+            captcha_id = self.generate_captcha(session, gid, "STORE")
+            captcha_text = self.resolve_captcha(captcha_id)
             if not captcha_text:
                 continue
             login_name = self.generate_login_name()
-            password = self.generate_credential(2, 4)
+            password = self.generate_password()
             with thread_lock:
                 email, email_password, ws = self.generate_mailbox()
             logger.info("Email box: %s", email)
@@ -322,8 +347,7 @@ class SteamRegger:
             resp = send_captcha()
             if not resp['bCaptchaMatches']:
                 logger.info("Captcha text is wrong: %s", captcha_text)
-                requests.post('http://rucaptcha.com/res.php?key={}&action=reportbad&id={}'
-                              .format(rucaptcha_api_key, captcha_id), timeout=30)
+                self.captcha_service.report_bad(captcha_id)
             elif not resp['bEmailAvail']:
                 logger.info("Email box is already used: %s", email)
             else:
@@ -349,22 +373,14 @@ class SteamRegger:
 
         return login_name, password, email, email_password
 
-    @staticmethod
-    def resolve_captcha(rucaptcha_api_key, captcha_id):
-        while True:
-            time.sleep(10)
-            r = requests.post('http://rucaptcha.com/res.php?key={}&action=get&id={}'
-                              .format(rucaptcha_api_key, captcha_id), timeout=30)
-            logger.info(r.text)
-            if 'CAPCHA_NOT_READY' in r.text:
-                continue
-            elif 'ERROR_CAPTCHA_UNSOLVABLE' in r.text:
-                return None
-            break
-        resolved_captcha = r.text.partition('|')[2].replace('amp;', '')
+    def resolve_captcha(self, captcha_id):
+        status, resolved_captcha, price = self.captcha_service.resolve_captcha(captcha_id)
+        self.captchas_expenses_total += float(price)
+        self.client.captchas_expenses_stat.set("Потрачено на капчи: %d" % self.captchas_expenses_total)
+        resolved_captcha = resolved_captcha.replace('amp;', '')
         return resolved_captcha
 
-    def generate_captcha(self, session, rucaptcha_api_key, gid, domain):
+    def generate_captcha(self, session, gid, domain):
         if domain == "STORE":
             url = 'https://store.steampowered.com/login/rendercaptcha/?gid={}'
         elif domain == "COMMUNITY":
@@ -372,12 +388,7 @@ class SteamRegger:
         else:
             raise Exception("WRONG domain")
         captcha_img = self.request_get(session, url.format(gid), timeout=30).content
-        resp = requests.post('http://rucaptcha.com/in.php',
-                             files={'file': ('captcha', captcha_img, 'image/png')},
-                             data={'key': rucaptcha_api_key},
-                             timeout=30)
-
-        captcha_id = resp.text.partition('|')[2]
+        captcha_id = self.captcha_service.generate_captcha(captcha_img)
         return captcha_id
 
     def generate_mailbox(self):
@@ -418,13 +429,21 @@ class SteamRegger:
         return creationid
 
     def generate_login_name(self):
+        login_template = self.client.login_template.get()
         while True:
-            login_name = self.generate_credential(2, 4, uppercase=False)
+            if login_template:
+                if self.counters_db["login_counters"].get(login_template, None) is None:
+                    self.counters_db["login_counters"][login_template] = 0
+                self.counters_db["login_counters"][login_template] += 1
+                login_name = login_template.format(num=self.counters_db["login_counters"][login_template])
+            else:
+                login_name = self.generate_credential(2, 4, uppercase=False)
             r = self.request_post(requests.Session(), 'https://store.steampowered.com/join/checkavail',
                                   data={'accountname': login_name, 'count': 1})
             logger.info(str(r) + " %s", login_name)
             if r['bAvailable']:
                 return login_name
+            self.client.add_log("Логин %s занят" % login_name)
             time.sleep(3)
 
     @staticmethod
@@ -443,7 +462,7 @@ class SteamRegger:
 
     def check_proxy_ban(self, proxy):
         try:
-            self.login("asd", "bkb", proxy=proxy, rucaptcha_api_key='', pass_login_captcha=True)
+            self.login("asd", "bkb", proxy=proxy, captcha_api_key='', pass_login_captcha=True)
         except CaptchaRequired:
             return True
         except AuthException:
@@ -462,17 +481,36 @@ class SteamRegger:
             credential = credential.lower()
         return credential
 
-    @staticmethod
-    def activate_account(steam_client):
+    def activate_account(self, steam_client, summary, real_name, country):
+        nickname = self.generate_credential(2, 4, uppercase=False)
+        nickname_template = self.client.nickname_template.get()
+        if nickname_template:
+            if self.counters_db["nickname_counters"].get(nickname_template, None) is None:
+                self.counters_db["nickname_counters"][nickname_template] = 0
+            self.counters_db["nickname_counters"][nickname_template] += 1
+            nickname = self.client.nickname_template.get().format(self.counters_db["nickname_counters"][nickname_template])
         url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
         data = {
             'sessionID': steam_client.get_session_id(),
             'type': 'profileSave',
-            'personaName': steam_client.login_name,
-            'summary': 'No information given.',
-            'primary_group_steamid': '0'
+            'personaName': nickname,
+            'summary': summary,
+            'real_name': real_name,
+            'country': country
         }
         steam_client.session.post(url, data=data, timeout=30, attempts=3)
+
+    @staticmethod
+    def upload_avatar(steam_client, avatar):
+        data = {
+            "MAX_FILE_SIZE": 1048576,
+            "type": "player_avatar_image",
+            "sId": steam_client.steamid,
+            "sessionid": steam_client.get_session_id(),
+            "doSub": 1,
+            "json": 1
+        }
+        steam_client.session.post("https://steamcommunity.com/actions/FileUploader", files={"avatar": avatar}, data=data)
 
     @staticmethod
     def edit_profile(steam_client):
@@ -513,6 +551,101 @@ class SteamRegger:
             logger.error("Failed to fetch offer link %s", err)
             return ''
 
+    def generate_password(self):
+        password_template = self.client.password_template.get()
+        while True:
+            if password_template:
+                if self.counters_db["password_counters"].get(password_template, None) is None:
+                    self.counters_db["password_counters"][password_template] = 0
+                self.counters_db["password_counters"][password_template] += 1
+                password = password_template.format(num=self.counters_db["password_counters"][password_template])
+            else:
+                password = self.generate_credential(2, 4, uppercase=False)
+            r = self.request_post(requests.Session(), 'https://store.steampowered.com/join/checkpasswordavail/',
+                                  data={'accountname': '', 'count': 1, 'password': password})
+            logger.info(str(r) + " %s", password)
+            if r['bAvailable']:
+                return password
+            time.sleep(3)
+            self.client.add_log("Пароль %s слишком часто используется и поэтому не был принят" % password)
+
+
+class RuCaptcha:
+
+    def __init__(self, api_key, host):
+        if not host:
+            host = "rucaptcha.com"
+        else:
+            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
+        host = "http://" + host + "/%s"
+        self.host = host
+        self.api_key = api_key
+
+    def get_balance(self):
+        resp = requests.post(self.host % 'res.php',
+                             data={'key': self.api_key,
+                                   'action': 'getbalance'})
+        logger.info(resp.text)
+        if 'ERROR_ZERO_BALANCE' in resp.text:
+            raise RuCaptchaError('На счету нулевой баланс')
+        elif 'ERROR_WRONG_USER_KEY' in resp.text or 'ERROR_KEY_DOES_NOT_EXIST' in resp.text:
+            raise RuCaptchaError('Неправильно введен API ключ')
+
+        return resp.text
+
+    def generate_captcha(self, captcha_img):
+        resp = requests.post(self.host % 'in.php',
+                             files={'file': ('captcha', captcha_img, 'image/png')},
+                             data={'key': self.api_key},
+                             timeout=30)
+
+        captcha_id = resp.text.partition('|')[2]
+        return captcha_id
+
+    def resolve_captcha(self, captcha_id):
+        while True:
+            time.sleep(10)
+            r = requests.post(self.host % 'res.php' + '?key={}&action=get2&id={}'
+                              .format(self.api_key, captcha_id), timeout=30)
+            logger.info(r.text)
+            if 'CAPCHA_NOT_READY' in r.text:
+                continue
+            elif 'ERROR_CAPTCHA_UNSOLVABLE' in r.text:
+                return None
+            break
+
+        return r.text.split('|')
+
+    def report_bad(self, captcha_id):
+        requests.post(self.host % 'res.php' + '?key={}&action=reportbad&id={}'
+                      .format(self.api_key, captcha_id), timeout=30)
+
+
+class AntiCaptcha(AnticaptchaClient):
+
+    def __init__(self, api_key, host):
+        if not host:
+            host = "api.anti-captcha.com"
+        else:
+            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
+        super().__init__(self, api_key, host=host)
+
+    def get_balance(self):
+        return self.getBalance()
+
+    def generate_captcha(self, captcha_img):
+        task = ImageToTextTask(io.BytesIO(captcha_img))
+        job = self.createTask(task)
+        return job
+
+    @staticmethod
+    def resolve_captcha(job):
+        job.join()
+        return job.get_captcha_text()
+
+    def report_bad(self, job):
+        self.reportIncorrectImage(job.task_id)
+
 
 if __name__ == '__main__':
-    foo = SteamRegger()
+    reg = SteamRegger(None)
