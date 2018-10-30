@@ -1,6 +1,6 @@
 from tkinter import *
 from tkinter.filedialog import askopenfilename
-from tkinter.messagebox import showwarning
+from tkinter.messagebox import showwarning, askyesno
 import datetime
 import os
 import traceback
@@ -11,6 +11,7 @@ from queue import Queue, Empty
 from proxybroker import Broker
 # import wmi
 import hashlib
+import pyqiwi
 
 from sms_services import *
 from steamreg import *
@@ -26,6 +27,10 @@ for dir_name in ('новые_аккаунты', 'загруженные_акка
 if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
+
+if not os.path.exists("database/imap-hosts.json"):
+    with open("database/imap-hosts.json", "w") as f:
+        f.write("{}")
 
 with open("database/interface_states.json", "r") as f:
     STATES = json.load(f)
@@ -84,7 +89,8 @@ class MainWindow:
         self.import_mafile = IntVar()
         self.mobile_bind = IntVar()
         self.fold_accounts = IntVar()
-        self.temp_mail = IntVar()
+        self.use_mail_repeatedly = IntVar()
+        self.add_money_to_account = IntVar()
         self.selection_type = IntVar()
         self.selection_type.set(int(SelectionType.RANDOM))
         self.sms_service_type = IntVar()
@@ -94,6 +100,8 @@ class MainWindow:
 
         self.onlinesim_api_key = StringVar()
         self.captcha_api_key = StringVar()
+        self.qiwi_api_key = StringVar()
+        self.free_games = StringVar
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
         self.amount_of_binders = IntVar()
@@ -105,6 +113,7 @@ class MainWindow:
         self.proxy_type = IntVar()
         self.use_local_ip = IntVar()
         self.pass_login_captcha = IntVar()
+        self.money_to_add = IntVar()
         self.captcha_host = StringVar()
         self.onlinesim_host = StringVar()
 
@@ -168,9 +177,11 @@ class MainWindow:
         self.autoreg_checkbutton = Checkbutton(tools_frame, text='Создавать новые аккаунты',
                                                variable=self.autoreg, command=self.set_states,
                                                disabledforeground='#808080')
-        self.temp_mail_checkbutton = Checkbutton(tools_frame, text='Использовать временные почты',
-                                                 variable=self.temp_mail, command=self.set_states,
-                                                 disabledforeground='#808080')
+        self.use_mail_repeatedly_checkbutton = Checkbutton(tools_frame, text='Использовать почты повторно',
+                                                           variable=self.use_mail_repeatedly, command=self.set_states,
+                                                           disabledforeground='#808080')
+        self.add_money_to_account_checkbutton = Checkbutton(tools_frame, text='Пополнять баланс на аккаунтах',
+                                                            variable=self.add_money_to_account)
 
         self.mafile_checkbutton = Checkbutton(tools_frame, text='Импортировать maFile в SDA',
                                               variable=self.import_mafile, command=self.set_states,
@@ -259,12 +270,10 @@ class MainWindow:
         self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
         self.load_menu.add_command(label="SDA Manifest", command=self.manifest_open)
 
-        self.proxy_menu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Настроить прокси", command=self.deploy_proxy_widget)
-
         self.menubar.add_cascade(label="Открыть статистику", command=self.deploy_stats_window)
-
         self.menubar.add_cascade(label="Задать шаблон", command=self.deploy_template_window)
+        self.menubar.add_cascade(label="Дополнительно", command=self.deploy_additional_settings_window)
 
         self.onlinesim_settings_bttn.grid(row=0, column=0, padx=3, pady=5, sticky=W)
 
@@ -281,9 +290,10 @@ class MainWindow:
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
         self.options_label.grid(row=2, column=0, pady=3, sticky=W)
 
-        self.temp_mail_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
+        self.use_mail_repeatedly_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
         self.mafile_checkbutton.grid(row=3, column=1, pady=1)
         self.fold_accounts_checkbutton.grid(row=4, column=1, pady=1, sticky=W)
+        self.add_money_to_account_checkbutton.grid(row=4, column=0, pady=1, sticky=W)
         self.amount_of_binders_label.grid(row=5, column=1, pady=1, sticky=W)
         self.amount_of_binders_field.grid(row=5, column=1, pady=1, padx=45, sticky=E)
 
@@ -361,10 +371,28 @@ class MainWindow:
         lbl12 = Label(top, textvariable=self.time_stat)
         lbl12.grid(row=12, column=0, padx=5, pady=15, sticky=W)
 
+    def deploy_additional_settings_window(self):
+        top = Toplevel(master=self.frame)
+        top.iconbitmap('database/plus-blue.ico')
+        top.title("Дополнительные фукнции")
+        Label(top, text="Добавить игры (appid через запятую):").grid(row=0, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.free_games, width=30) \
+            .grid(row=0, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Пополнить баланс на аккаунтах").grid(row=1, column=0, padx=5, pady=5, sticky=W)
+        Label(top, text="QIWI Api Key:").grid(row=2, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.qiwi_api_key, width=30) \
+            .grid(row=2, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Сумма (в рублях):").grid(row=3, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.money_to_add, width=5) \
+            .grid(row=3, column=1, padx=5, pady=5, sticky=W)
+
+        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=2, row=4, padx=5, pady=5)
+
     def deploy_template_window(self):
         top = Toplevel(master=self.frame)
         top.title("Шаблоны")
-        top.geometry('420x420')
         Label(top, text="Шаблон для логина:").grid(row=0, column=0, padx=5, pady=5, sticky=W)
         Entry(top, textvariable=self.login_template, width=20)\
             .grid(row=0, column=1, padx=5, pady=5, sticky=W)
@@ -404,6 +432,8 @@ class MainWindow:
                         "Страны указываются в формате ISO 3166-1 Alpha 2 (например: RU, US)\n\n"
                         "Аватары: URL ссылки на изображения")\
             .grid(row=9, columnspan=2, padx=5, pady=5, sticky=W)
+
+        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=2, row=10, padx=5, pady=5)
 
     def add_log(self, message):
         self.log_box.insert(END, message)
@@ -483,6 +513,24 @@ class MainWindow:
                                       "регистрации должно составлять от 1 до 33",
                             parent=self.parent)
                 return False
+
+            if not self.email_boxes_data:
+                showwarning("Ошибка", "Почты не загружены")
+                return False
+
+            if self.add_money_to_account.get():
+                if not self.money_to_add.get():
+                    showwarning("Ошибка", "Не указана сумма для пополнения баланса")
+                    return False
+
+                if not self.qiwi_api_key.get():
+                    showwarning("Ошибка", "Не указан QIWI Api ключ")
+                    return False
+
+                is_agree = askyesno("Пополнение баланса", "Вы уверены что хотите пополнять баланс на аккаунтах?",
+                                    icon='warning')
+                if not is_agree:
+                    return False
 
         if self.mobile_bind.get():
             try:
@@ -744,7 +792,7 @@ class MainWindow:
             .grid(row=2, column=1, columnspan=2, pady=5, padx=5, sticky=W)
 
         Label(top, text='Host:').grid(row=3, column=0, pady=5, padx=5, sticky=W)
-        Entry(top, textvariable=self.onlinesim_host, width=33)\
+        Entry(top, textvariable=self.onlinesim_host, width=33, )\
             .grid(row=3, column=1, columnspan=2, pady=5, padx=5, sticky=W)
 
         Label(top, text='Страна номера:').grid(row=4, column=0, pady=3, sticky=W)
@@ -847,8 +895,12 @@ class MainWindow:
 
     def put_from_text_file(self):
         for item in self.old_accounts:
-            login, password = item.split(':')[:2]
-            account = Account(login, password, None, None)
+            email, email_password = None, None
+            try:
+                login, password, email, email_password = item.split(':')[:4]
+            except ValueError:
+                login, password = item.split(':')[:2]
+            account = Account(login, password, email, email_password)
             self.accounts.put(account)
         RegistrationThread.is_alive = False
 
@@ -969,7 +1021,6 @@ class RegistrationThread(threading.Thread):
     error = False
 
     lock = threading.Lock()
-    email_lock = threading.Lock()
 
     is_alive = True
 
@@ -1008,8 +1059,7 @@ class RegistrationThread(threading.Thread):
     def registrate_account(self):
         self.client.status_bar.set('Создаю аккаунты, решаю капчи...')
         try:
-            login, passwd, email, email_password = steamreg.create_account_web(self.client.captcha_api_key.get().strip(),
-                                                                               self.email_lock, self.proxy)
+            login, passwd, email, email_password = steamreg.create_account_web(self.proxy)
         except LimitReached as err:
             logging.error(err)
             if self.proxy:
@@ -1026,7 +1076,7 @@ class RegistrationThread(threading.Thread):
         with self.lock:
             self.save_unattached_account(login, passwd, email, email_password)
         try:
-            steam_client = steamreg.login(login, passwd, self.client.captcha_api_key.get(), self.proxy, self.client,
+            steam_client = steamreg.login(login, passwd, self.proxy, self.client,
                                           pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
@@ -1076,6 +1126,11 @@ class RegistrationThread(threading.Thread):
 
             steamreg.upload_avatar(steam_client, avatar)
 
+        if self.client.free_games.get():
+            self.add_games(steam_client)
+        if self.client.add_money_to_account.get():
+            self.add_money()
+
         self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
         account = Account(login, passwd, email, email_password)
         self.client.accounts.put(account)
@@ -1099,6 +1154,21 @@ class RegistrationThread(threading.Thread):
         else:
             self.client.add_log("Regger: Использую local ip")
         self.proxy = proxy
+
+    def add_games(self, steam_client):
+        appids = self.client.free_games.replace(" ", "").split(",")
+        data = {
+            'action': 'add_to_cart',
+            'snr': '1_5_9__403',
+            'sessionid': steam_client.get('sessionid', domain='store.steampowered.com')
+        }
+        for subid in appids:
+            data['subid'] = subid
+            steam_client.session.post('http://store.steampowered.com/checkout/addfreelicense', data=data)
+
+    def add_money(self):
+        wallet = pyqiwi.Wallet(token=self.client.qiwi_api_key.get())
+        payment = wallet.send(pid="25549", recipient="", amount=int(self.client.money_to_add.get()))
 
     @staticmethod
     def save_unattached_account(login, passwd, email, email_password):
@@ -1176,13 +1246,13 @@ class Binder(threading.Thread):
 
     def bind_account(self, account):
         self.client.status_bar.set('Делаю привязку Mobile Guard...')
-        login, passwd = account.login, account.password
+        login, passwd, email, email_password = account.login, account.password, account.email, account.email_password
         logger.info('Аккаунт: %s:%s', login, passwd)
         insert_log = self.log_wrapper(login)
         insert_log('Номер: ' + self.number['number'])
         insert_log('Логинюсь в аккаунт')
         try:
-            steam_client = steamreg.mobile_login(login, passwd, self.client.captcha_api_key.get(), self.proxy,
+            steam_client = steamreg.mobile_login(login, passwd, self.proxy, email, email_password,
                                                  pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)

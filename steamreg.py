@@ -8,8 +8,8 @@ import io
 import sys
 import logging
 import shelve
+import imaplib
 
-from websocket import create_connection
 from requests.exceptions import Timeout, ConnectionError, ProxyError
 from python_anticaptcha import AnticaptchaClient, ImageToTextTask
 
@@ -26,6 +26,39 @@ class SteamAuthError(Exception): pass
 class SteamRuCaptchaError(Exception): pass
 class RuCaptchaError(Exception): pass
 class LimitReached(Exception): pass
+class InvalidEmail(Exception): pass
+
+
+def convert_edomain_to_imap(email_domain, addition_hosts_path=""):
+    host = None
+    domains_and_hosts = {
+        "imap.yandex.ru": ["yandex.ru", ],
+        "imap.mail.ru": ["mail.ru", "bk.ru", "list.ru", "inbox.ru", "mail.ua"],
+        "imap.rambler.ru": ["rambler.ru", "lenta.ru", "autorambler.ru", "myrambler.ru", "ro.ru", "rambler.ua"],
+        "imap.gmail.com": ["gmail.com", ],
+        "imap.mail.yahoo.com": ["yahoo.com", ],
+        "imap-mail.outlook.com": ["outlook.com", "hotmail.com"],
+        "imap.aol.com": ["aol.com", ]
+    }
+
+    additional_hosts = {}
+    if addition_hosts_path:
+        try:
+            with open(addition_hosts_path, "r") as f:
+                try:
+                    additional_hosts = json.load(f)
+                except json.JSONDecodeError:
+                    logger.error("Неправильно оформлен файл imap-hosts.json")
+        except FileNotFoundError as err:
+            logger.error(err)
+
+    domains_and_hosts.update(additional_hosts)
+
+    for host, domains in domains_and_hosts:
+        if email_domain in domains:
+            return host
+
+    return host
 
 
 class SteamRegger:
@@ -36,6 +69,8 @@ class SteamRegger:
         self.sucessfull_captchas_counter = 0
         self.captchas_expenses_total = 0
 
+        self.imap_servers = {}
+
         self.counters_db = shelve.open("database/tmplcounters", writeback=True)
 
         for key in ("login_counters", "password_counters", "nickname_counters"):
@@ -44,9 +79,9 @@ class SteamRegger:
 
         api_key = self.client.captcha_api_key.get()
         captcha_host = self.client.captcha_host.get()
-        if self.client.captcha_service_type == CaptchaService.RuCaptcha:
+        if self.client.captcha_service_type.get() == CaptchaService.RuCaptcha:
             self.captcha_service = RuCaptcha(api_key, captcha_host)
-        elif self.client.captcha_service_type == CaptchaService.AntiCaptcha:
+        elif self.client.captcha_service_type.get() == CaptchaService.AntiCaptcha:
             self.captcha_service = AntiCaptcha(api_key, captcha_host)
 
     @staticmethod
@@ -77,8 +112,7 @@ class SteamRegger:
                 if session.proxies:
                     raise err
 
-    def login(self, login_name, password, captcha_api_key,
-              proxy=None, email=None, email_passwd=None, pass_login_captcha=False):
+    def login(self, login_name, password, proxy=None, email=None, email_passwd=None, pass_login_captcha=False):
         steam_client = SteamClient()
         if proxy:
             proxy_uri = self.build_uri(proxy)
@@ -118,8 +152,7 @@ class SteamRegger:
 
         return steam_client
 
-    def mobile_login(self, login_name, password, captcha_api_key,
-                     proxy=None, email=None, email_passwd=None, pass_login_captcha=False):
+    def mobile_login(self, login_name, password, proxy=None, email=None, email_passwd=None, pass_login_captcha=False):
         steam_client = SteamClient()
         if proxy:
             proxy_uri = self.build_uri(proxy)
@@ -138,8 +171,7 @@ class SteamRegger:
                 if pass_login_captcha:
                     raise err
                 captcha_gid = err
-                captcha_id = self.generate_captcha(steam_client.session, captcha_api_key,
-                                                   captcha_gid, 'COMMUNITY')
+                captcha_id = self.generate_captcha(steam_client.session, captcha_gid, 'COMMUNITY')
                 captcha_text = self.resolve_captcha(captcha_id)
 
         resp_message = resp.get('message', '')
@@ -307,7 +339,7 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account_web(self, captcha_api_key, thread_lock, proxy=None):
+    def create_account_web(self, proxy=None):
         def send_captcha():
             data = {
                 'captchagid': gid,
@@ -340,24 +372,26 @@ class SteamRegger:
                 continue
             login_name = self.generate_login_name()
             password = self.generate_password()
-            with thread_lock:
-                email, email_password, ws = self.generate_mailbox()
-            logger.info("Email box: %s", email)
             logger.info("Resolving captcha... %s", login_name)
             resp = send_captcha()
             if not resp['bCaptchaMatches']:
                 logger.info("Captcha text is wrong: %s", captcha_text)
                 self.captcha_service.report_bad(captcha_id)
-            elif not resp['bEmailAvail']:
-                logger.info("Email box is already used: %s", email)
             else:
                 break
 
         logger.info("Confirming email... %s", login_name)
-        with thread_lock:
-            creationid = self.confirm_email(session, ws, login_name, gid, captcha_text, email)
-            if not creationid:
-                return None, None
+        while True:
+            item = self.client.email_boxes_data.pop()
+            email, email_password = item.split(":")
+            try:
+                creationid = self.confirm_email(session, gid, captcha_text, email, email_password)
+                break
+            except InvalidEmail:
+                continue
+
+        if self.client.use_mail_repeatedly.get():
+            self.client.email_boxes_data.append(item)
         logger.info("Email confirmed: %s %s", email, login_name)
 
         data = {
@@ -391,20 +425,7 @@ class SteamRegger:
         captcha_id = self.captcha_service.generate_captcha(captcha_img)
         return captcha_id
 
-    def generate_mailbox(self):
-        ssl_option = {"check_hostname": False, "cert_reqs": 0, "ca_certs": "cacert.pem"}
-        try:
-            ws = create_connection('wss://dropmail.me/websocket', sslopt=ssl_option)
-            mailbox, email_password = ws.recv().partition(':')[::2]
-            mailbox = mailbox.lstrip('A')
-        except TimeoutError as err:
-            logger.error(err)
-            return self.generate_mailbox()
-        ws.recv()  # skip the message with domains
-        # get password
-        return mailbox, email_password, ws
-
-    def confirm_email(self, session, websocket, login_name, gid, captcha_text, email):
+    def confirm_email(self, session, gid, captcha_text, email, email_password):
         data = {
             'captcha_text': captcha_text,
             'captchagid': gid,
@@ -416,15 +437,8 @@ class SteamRegger:
             raise LimitReached
 
         creationid = resp['sessionid']
-        response = websocket.recv()
-        websocket.close()
-        try:
-            mail = json.loads(response.lstrip('I'))['text']
-        except Exception as err:
-            logger.error('Error: %ss\nResponse: %s\nMailbox: %s', err, response, email)
-            sys.exit(1)
-
-        link = re.search(r'(https:\/\/.+newaccountverification.+?)\n', mail).group(1)
+        time.sleep(10)  # wait some time until email has been received
+        link = self.fetch_confirmation_link(email, email_password)
         session.get(link)
         return creationid
 
@@ -462,7 +476,7 @@ class SteamRegger:
 
     def check_proxy_ban(self, proxy):
         try:
-            self.login("asd", "bkb", proxy=proxy, captcha_api_key='', pass_login_captcha=True)
+            self.login("asd", "bkb", proxy=proxy, pass_login_captcha=True)
         except CaptchaRequired:
             return True
         except AuthException:
@@ -568,6 +582,35 @@ class SteamRegger:
                 return password
             time.sleep(3)
             self.client.add_log("Пароль %s слишком часто используется и поэтому не был принят" % password)
+
+    def fetch_confirmation_link(self, email, email_password):
+        email_domain = email.partition("@")[2]
+        imap_host = convert_edomain_to_imap(email_domain, "database/imap-hosts.json")
+        if imap_host is None:
+            self.client.add_log("Не удается найти imap host для данного email домена: %s" % email_domain)
+            self.client.add_log("Убедитесь что файл imap-hosts.json оформлен правильно и "
+                                "imap хост для данного домена добавлен в него: %s" % email_domain)
+            raise InvalidEmail
+
+        server = self.imap_servers.get(imap_host, None)
+        if server is None:
+            server = imaplib.IMAP4_SSL(imap_host)
+            server.login(email, email_password)
+            server.select()
+            self.imap_servers[imap_host] = server
+        try:
+            result, data = server.uid("search", None, '(HEADER Subject "New Steam Account Email Verification")')
+        except Exception:
+            logger.error("Время действия соединения с imap хостом %s истекло" % imap_host)
+            del self.imap_servers[imap_host]
+            link = self.fetch_confirmation_link(email, email_password)
+            return link
+
+        uid = str(data[1][0].split()[-1])
+        result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
+        mail = data[1][0][1].decode('utf-8')
+        link = re.search(r'(https://.+newaccountverification.+?)\n', mail).group(1)
+        return link
 
 
 class RuCaptcha:
