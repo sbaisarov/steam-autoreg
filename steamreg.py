@@ -54,7 +54,7 @@ def convert_edomain_to_imap(email_domain, addition_hosts_path=""):
 
     domains_and_hosts.update(additional_hosts)
 
-    for host, domains in domains_and_hosts:
+    for host, domains in domains_and_hosts.items():
         if email_domain in domains:
             return host
 
@@ -70,6 +70,7 @@ class SteamRegger:
         self.captchas_expenses_total = 0
 
         self.imap_servers = {}
+        self.captcha_service = None
 
         self.counters_db = shelve.open("database/tmplcounters", writeback=True)
 
@@ -77,6 +78,7 @@ class SteamRegger:
             if self.counters_db.get(key) is None:
                 self.counters_db[key] = {}
 
+    def set_captcha_service(self):
         api_key = self.client.captcha_api_key.get()
         captcha_host = self.client.captcha_host.get()
         if self.client.captcha_service_type.get() == CaptchaService.RuCaptcha:
@@ -363,35 +365,40 @@ class SteamRegger:
                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                                 'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
 
+        login_name = self.generate_login_name()
+        password = self.generate_password()
         while True:
-            gid = self.request_get(session, 'https://store.steampowered.com/join/refreshcaptcha/?count=1',
-                                   headers={'Host': 'store.steampowered.com'}, timeout=30, is_json=True)['gid']
-            captcha_id = self.generate_captcha(session, gid, "STORE")
-            captcha_text = self.resolve_captcha(captcha_id)
-            if not captcha_text:
-                continue
-            login_name = self.generate_login_name()
-            password = self.generate_password()
-            logger.info("Resolving captcha... %s", login_name)
-            resp = send_captcha()
-            if not resp['bCaptchaMatches']:
-                logger.info("Captcha text is wrong: %s", captcha_text)
-                self.captcha_service.report_bad(captcha_id)
-            else:
-                break
+            try:
+                email_item = self.client.email_boxes_data.pop(0)
+            except IndexError:
+                raise Exception("Почты закончились. Загрузите почты.")
+            email, email_password = email_item.split(":")
+            logger.info("Using email: %s" % email)
+            while True:
+                gid = self.request_get(session, 'https://store.steampowered.com/join/refreshcaptcha/?count=1',
+                                       headers={'Host': 'store.steampowered.com'}, timeout=30, is_json=True)['gid']
+                captcha_id = self.generate_captcha(session, gid, "STORE")
+                captcha_text = self.resolve_captcha(captcha_id)
+                if not captcha_text:
+                    continue
+                logger.info("Resolving captcha... %s", login_name)
+                resp = send_captcha()
+                if not resp['bCaptchaMatches']:
+                    logger.info("Captcha text is wrong: %s", captcha_text)
+                    self.captcha_service.report_bad(captcha_id)
+                else:
+                    break
 
-        logger.info("Confirming email... %s", login_name)
-        while True:
-            item = self.client.email_boxes_data.pop()
-            email, email_password = item.split(":")
+            logger.info("Confirming email... %s", login_name)
             try:
                 creationid = self.confirm_email(session, gid, captcha_text, email, email_password)
                 break
-            except InvalidEmail:
+            except (InvalidEmail, imaplib.IMAP4.error) as err:
+                self.client.add_log("Ошибка почты %s: %s" % (email, err))
                 continue
 
         if self.client.use_mail_repeatedly.get():
-            self.client.email_boxes_data.append(item)
+            self.client.email_boxes_data.append(email_item)
         logger.info("Email confirmed: %s %s", email, login_name)
 
         data = {
@@ -408,7 +415,10 @@ class SteamRegger:
         return login_name, password, email, email_password
 
     def resolve_captcha(self, captcha_id):
-        status, resolved_captcha, price = self.captcha_service.resolve_captcha(captcha_id)
+        result = self.captcha_service.resolve_captcha(captcha_id)
+        if result is None:
+            return result
+        status, resolved_captcha, price = result
         self.captchas_expenses_total += float(price)
         self.client.captchas_expenses_stat.set("Потрачено на капчи: %d" % self.captchas_expenses_total)
         resolved_captcha = resolved_captcha.replace('amp;', '')
@@ -433,12 +443,14 @@ class SteamRegger:
         }
         resp = self.request_post(session, 'https://store.steampowered.com/join/ajaxverifyemail', data=data)
         logger.info('ajaxverify response: %s', resp)
+        if resp['success'] == 17:
+            raise InvalidEmail("Данный почтовый адрес не поддерживается Steam")
         if resp['success'] != 1:
             raise LimitReached
 
         creationid = resp['sessionid']
         time.sleep(10)  # wait some time until email has been received
-        link = self.fetch_confirmation_link(email, email_password)
+        link = self.fetch_confirmation_link(email, email_password, creationid)
         session.get(link)
         return creationid
 
@@ -502,7 +514,7 @@ class SteamRegger:
             if self.counters_db["nickname_counters"].get(nickname_template, None) is None:
                 self.counters_db["nickname_counters"][nickname_template] = 0
             self.counters_db["nickname_counters"][nickname_template] += 1
-            nickname = self.client.nickname_template.get().format(self.counters_db["nickname_counters"][nickname_template])
+            nickname = self.client.nickname_template.get().format(num=self.counters_db["nickname_counters"][nickname_template])
         url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
         data = {
             'sessionID': steam_client.get_session_id(),
@@ -566,15 +578,15 @@ class SteamRegger:
             return ''
 
     def generate_password(self):
-        password_template = self.client.password_template.get()
+        passwd_template = self.client.passwd_template.get()
         while True:
-            if password_template:
-                if self.counters_db["password_counters"].get(password_template, None) is None:
-                    self.counters_db["password_counters"][password_template] = 0
-                self.counters_db["password_counters"][password_template] += 1
-                password = password_template.format(num=self.counters_db["password_counters"][password_template])
+            if passwd_template:
+                if self.counters_db["password_counters"].get(passwd_template, None) is None:
+                    self.counters_db["password_counters"][passwd_template] = 0
+                self.counters_db["password_counters"][passwd_template] += 1
+                password = passwd_template.format(num=self.counters_db["password_counters"][passwd_template])
             else:
-                password = self.generate_credential(2, 4, uppercase=False)
+                password = self.generate_credential(4, 6, uppercase=False)
             r = self.request_post(requests.Session(), 'https://store.steampowered.com/join/checkpasswordavail/',
                                   data={'accountname': '', 'count': 1, 'password': password})
             logger.info(str(r) + " %s", password)
@@ -583,34 +595,43 @@ class SteamRegger:
             time.sleep(3)
             self.client.add_log("Пароль %s слишком часто используется и поэтому не был принят" % password)
 
-    def fetch_confirmation_link(self, email, email_password):
+    def fetch_confirmation_link(self, email, email_password, creationid):
         email_domain = email.partition("@")[2]
         imap_host = convert_edomain_to_imap(email_domain, "database/imap-hosts.json")
         if imap_host is None:
-            self.client.add_log("Не удается найти imap host для данного email домена: %s" % email_domain)
-            self.client.add_log("Убедитесь что файл imap-hosts.json оформлен правильно и "
-                                "imap хост для данного домена добавлен в него: %s" % email_domain)
-            raise InvalidEmail
+            raise InvalidEmail("Не удается найти imap host для данного email домена: %s"
+                               "Убедитесь, что файл imap-hosts.json оформлен правильно и "
+                               "imap хост для данного домена добавлен в него: %s" % email_domain)
 
-        server = self.imap_servers.get(imap_host, None)
-        if server is None:
-            server = imaplib.IMAP4_SSL(imap_host)
-            server.login(email, email_password)
-            server.select()
-            self.imap_servers[imap_host] = server
-        try:
-            result, data = server.uid("search", None, '(HEADER Subject "New Steam Account Email Verification")')
-        except Exception:
-            logger.error("Время действия соединения с imap хостом %s истекло" % imap_host)
-            del self.imap_servers[imap_host]
-            link = self.fetch_confirmation_link(email, email_password)
-            return link
+        server = imaplib.IMAP4_SSL(imap_host)
+        server.login(email, email_password)
+        server.select()
+        attempts = 0
+        while attempts < 5:
+            attempts += 1
+            # try:
+            result, data = server.uid("search", None, 'ALL')
+            # except Exception:
+            #     logger.error("Время действия соединения с imap хостом %s истекло" % imap_host)
+            #     del self.imap_servers[imap_host]
+            #     link = self.fetch_confirmation_link(email, email_password)
+            #     return link
 
-        uid = str(data[1][0].split()[-1])
-        result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
-        mail = data[1][0][1].decode('utf-8')
-        link = re.search(r'(https://.+newaccountverification.+?)\n', mail).group(1)
-        return link
+            uid = data[0].split()[-1]
+            result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
+            mail = data[0][1].decode('utf-8')
+            try:
+                link = re.search(r'(https://.+newaccountverification.+?)\r', mail).group(1)
+            except AttributeError:
+                time.sleep(5)
+                continue
+            creationid_from_link = re.search(r"creationid=(\w+)", link).group(1)
+            if creationid == creationid_from_link:
+                server.close()
+                return link
+            time.sleep(5)
+        server.close()
+        raise InvalidEmail("Не удается получить письмо от Steam")
 
 
 class RuCaptcha:
