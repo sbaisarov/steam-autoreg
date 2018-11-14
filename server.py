@@ -163,26 +163,49 @@ def validate_code():
     key = request.args.get("key")
     if key is not None:
         key = key.strip()
-    task = request.args.get("task")
-    if task == "registration":
-        quota = "registration_quota"
-    elif task == "binding":
-        quota = "binding_quota"
-    resp = requests.post("https://www.oplata.info/xml/check_unique_code.asp", data=json.dumps({
-        "id_seller": 479531,
-        "unique_code": code,
-        "sign": hashlib.md5("479531:{code}:C9149CDFDC".format(code=code).encode("utf-8")).hexdigest()
-    }), headers={"Content-Type": "application/json"}).json()
-    amount = int(resp["cnt_goods"])
-    with shelve.open("clients", writeback=True) as db:
+    success = False
+    try:
+        db = shelve.open("clients", writeback=True)
         try:
             client = db[key]
-            client[quota] += amount
+        except KeyError:
+            message = "Не удалось найти ключ продукта программы в базе данных"
+            return jsonify({"success": success, "message": message}), 200
+
+        try:
+            used_codes = db["used_codes"]
+        except KeyError:
+            used_codes = db["used_codes"] = set()
+        if code in used_codes:
+            message = "Этот код уже активирован"
+            return jsonify({"success": success, "message": message}), 200
+        resp = requests.post("https://www.oplata.info/xml/check_unique_code.asp", data=json.dumps({
+            "id_seller": 479531,
+            "unique_code": code,
+            "sign": hashlib.md5("479531:{code}:C9149CDFDC".format(code=code).encode("utf-8")).hexdigest()
+        }), headers={"Content-Type": "application/json"}).json()
+        if resp["retval"] == "-2":
+            message = "Неверно введен код"
+            return jsonify({"success": success, "message": message}), 200
+
+        id_goods = resp["id_goods"]
+        if id_goods == "2542451":
+            quota = "registration_quota"
+        elif id_goods == "2550416":
+            quota = "binding_quota"
+        amount = int(resp["cnt_goods"])
+        client[quota] += amount
+        try:
             client["payments"][resp["inv"]] = resp
         except KeyError:
-            key = None
-
-    return render_template("payment.html", key=key), 200
+            client["payments"] = {}
+            client["payments"][resp["inv"]] = resp
+        used_codes.add(code)
+    finally:
+        db.close()
+    success = True
+    message = "Код успешно активирован. Перезапустите программу чтобы изменения вступили в силу"
+    return jsonify({"success": success, "message": message, "amount": amount, "quota": quota}), 200
 
 
 @app.route('/searchdb')

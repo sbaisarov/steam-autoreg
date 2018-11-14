@@ -15,6 +15,7 @@ from python_anticaptcha import AnticaptchaClient, ImageToTextTask
 
 from steampy.client import SteamClient
 from steampy.login import CaptchaRequired, AuthException
+from steampy.utils import convert_edomain_to_imap
 from steampy import guard
 
 from enums import CaptchaService
@@ -27,38 +28,6 @@ class SteamRuCaptchaError(Exception): pass
 class RuCaptchaError(Exception): pass
 class LimitReached(Exception): pass
 class InvalidEmail(Exception): pass
-
-
-def convert_edomain_to_imap(email_domain, addition_hosts_path=""):
-    host = None
-    domains_and_hosts = {
-        "imap.yandex.ru": ["yandex.ru", ],
-        "imap.mail.ru": ["mail.ru", "bk.ru", "list.ru", "inbox.ru", "mail.ua"],
-        "imap.rambler.ru": ["rambler.ru", "lenta.ru", "autorambler.ru", "myrambler.ru", "ro.ru", "rambler.ua"],
-        "imap.gmail.com": ["gmail.com", ],
-        "imap.mail.yahoo.com": ["yahoo.com", ],
-        "imap-mail.outlook.com": ["outlook.com", "hotmail.com"],
-        "imap.aol.com": ["aol.com", ]
-    }
-
-    additional_hosts = {}
-    if addition_hosts_path:
-        try:
-            with open(addition_hosts_path, "r") as f:
-                try:
-                    additional_hosts = json.load(f)
-                except json.JSONDecodeError:
-                    logger.error("Неправильно оформлен файл imap-hosts.json")
-        except FileNotFoundError as err:
-            logger.error(err)
-
-    domains_and_hosts.update(additional_hosts)
-
-    for host, domains in domains_and_hosts.items():
-        if email_domain in domains:
-            return host
-
-    return host
 
 
 class SteamRegger:
@@ -418,7 +387,12 @@ class SteamRegger:
         result = self.captcha_service.resolve_captcha(captcha_id)
         if result is None:
             return result
-        status, resolved_captcha, price = result
+        try:
+            status, resolved_captcha, price = result
+        except ValueError:
+            status, resolved_captcha = result
+            price = 0
+
         self.captchas_expenses_total += float(price)
         self.client.captchas_expenses_stat.set("Потрачено на капчи: %d" % self.captchas_expenses_total)
         resolved_captcha = resolved_captcha.replace('amp;', '')
@@ -692,7 +666,7 @@ class AntiCaptcha(AnticaptchaClient):
             host = "api.anti-captcha.com"
         else:
             host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
-        super().__init__(self, api_key, host=host)
+        super().__init__(api_key, host=host)
 
     def get_balance(self):
         return self.getBalance()
@@ -705,7 +679,8 @@ class AntiCaptcha(AnticaptchaClient):
     @staticmethod
     def resolve_captcha(job):
         job.join()
-        return job.get_captcha_text()
+        status, price = job._last_result["status"], job._last_result["cost"]
+        return status, job.get_captcha_text(), price
 
     def report_bad(self, job):
         self.reportIncorrectImage(job.task_id)

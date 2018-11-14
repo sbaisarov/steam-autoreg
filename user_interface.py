@@ -98,6 +98,7 @@ class MainWindow:
         self.captcha_service_type = IntVar()
         self.captcha_service_type.set(int(CaptchaService.RuCaptcha))
 
+        self.activation_code = StringVar()
         self.onlinesim_api_key = StringVar()
         self.captcha_api_key = StringVar()
         self.qiwi_api_key = StringVar()
@@ -291,6 +292,7 @@ class MainWindow:
         self.menubar.add_cascade(label="Открыть статистику", command=self.deploy_stats_window)
         self.menubar.add_cascade(label="Задать шаблон", command=self.deploy_template_window)
         self.menubar.add_cascade(label="Дополнительно", command=self.deploy_additional_settings_window)
+        self.menubar.add_cascade(label="Активировать код", command=self.deploy_code_activation_window)
 
         self.product_key_label.grid(row=4, column=0, padx=5, pady=5, sticky=W)
         self.product_key_entry.grid(row=5, padx=5, column=0, pady=5, sticky=W)
@@ -398,6 +400,33 @@ class MainWindow:
 
         lbl12 = Label(top, textvariable=self.time_stat)
         lbl12.grid(row=17, column=0, padx=5, pady=15, sticky=W)
+
+    def deploy_code_activation_window(self):
+        def activate_code():
+            resp = requests.get("https://shamanovski.pythonanywhere.com/validatecode", params={
+                "key": self.software_product_key.get(), "uniquecode": code.get()
+            }).json()
+            message = resp["message"]
+            success = resp["success"]
+            if success:
+                quota = resp["quota"]
+                amount = resp["amount"] * 10
+                if quota == "registration_quota":
+                    self.registration_quota.set(self.registration_quota.get() + amount)
+                elif quota == "binding_quota":
+                    self.binding_quota.set(self.binding_quota.get() + amount)
+
+            showwarning("Активация кода", message)
+            top.destroy()
+
+        top = Toplevel(master=self.frame)
+        top.title("Активация кода")
+        code = StringVar()
+        Label(top, text="Код:").grid(row=0, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=code, width=30) \
+            .grid(row=0, column=1, padx=5, pady=5, sticky=W)
+        
+        Button(top, command=activate_code, text="Подтвердить").grid(column=0, columnspan=2, row=1, padx=5, pady=5)
 
     def deploy_additional_settings_window(self):
         top = Toplevel(master=self.frame)
@@ -888,7 +917,7 @@ class MainWindow:
 
     def init_proxy_producing(self):
         proxy_type = self.proxy_type.get()
-        if not self.use_local_ip.get() or proxy_type == Proxy.Local:
+        if self.use_local_ip.get() or proxy_type == Proxy.Local:
             self.reg_proxies.put(None)
             self.bind_proxies.put(None)
         if proxy_type == Proxy.Local:
@@ -1338,7 +1367,7 @@ class Binder(threading.Thread):
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
         self.client.binding_quota.set(self.client.binding_quota.get() - 1)
         if not self.client.autoreg.get():
-            steamreg.activate_account(steam_client)
+            steamreg.activate_account(steam_client, "", "", "")
             steamreg.edit_profile(steam_client)
         insert_log('Guard успешно привязан')
         self.binded_counter += 1
@@ -1466,7 +1495,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.0.1')
+    root.title('Steam Auto Authenticator v1.0.2')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
