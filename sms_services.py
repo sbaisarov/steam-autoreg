@@ -129,7 +129,7 @@ class SmsActivateApi:
         resp = requests.get(self.base_url, params={'api_key': self.api_key,
                                                    'action': 'getBalance'}, timeout=10)
         logger.info(resp.text)
-        if int(resp.text.partition(':')[2]) < 2:
+        if float(resp.text.partition(':')[2]) < 2:
             raise SmsActivateError('Недостаточно баланса для заказа номера')
         return resp.text
 
@@ -147,7 +147,7 @@ class SmsActivateApi:
         number = '+' + number
         return id, number
 
-    def set_opearion_ok(self, id):
+    def set_operation_ok(self, id):
         self._set_status(id, 6)
 
     def request_repeated_number_usage(self, id):

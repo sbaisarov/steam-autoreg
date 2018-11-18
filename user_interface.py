@@ -112,7 +112,7 @@ class MainWindow:
         self.country_code = StringVar()
         self.country_code.set('Россия')
         self.proxy_type = IntVar()
-        self.use_local_ip = IntVar()
+        self.dont_use_local_ip = IntVar()
         self.pass_login_captcha = IntVar()
         self.money_to_add = IntVar()
         self.captcha_host = StringVar()
@@ -773,7 +773,7 @@ class MainWindow:
         top.title("Настройка прокси")
         top.iconbitmap('database/proxy.ico')
         top.geometry('550x355')
-        checkbttn = Checkbutton(top, text="Не использовать родной IP если есть прокси", variable=self.use_local_ip)
+        checkbttn = Checkbutton(top, text="Не использовать родной IP если есть прокси", variable=self.dont_use_local_ip)
         checkbttn.grid(column=0, row=0, pady=5, sticky=W)
 
         checkbttn2 = Checkbutton(top, text="\nПропускать прокси с которыми требуется\nрешать капчи для авторизации",
@@ -917,7 +917,7 @@ class MainWindow:
 
     def init_proxy_producing(self):
         proxy_type = self.proxy_type.get()
-        if self.use_local_ip.get() or proxy_type == Proxy.Local:
+        if not self.dont_use_local_ip.get() or proxy_type == Proxy.Local:
             self.reg_proxies.put(None)
             self.bind_proxies.put(None)
         if proxy_type == Proxy.Local:
@@ -1136,6 +1136,7 @@ class RegistrationThread(threading.Thread):
                 self.client.add_log("Достигнут лимит регистрации аккаунтов для local ip.")
             self.proxy_limited += 1
             self.client.proxies_limited_stat.set("Прокси залимичено Steam: %d" % self.proxy_limited)
+            self.set_proxy()
             return
 
         logger.info('Аккаунт: %s:%s', login, passwd)
@@ -1360,6 +1361,7 @@ class Binder(threading.Thread):
             insert_log(error)
             self.numbers_failed_counter += 1
             self.client.numbers_failed_stat.set("Недействительных номеров: %s" % self.numbers_failed_counter)
+            self.get_new_number(self.number['tzid'])
             return
         steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
         mobguard_data['account_password'] = passwd
@@ -1410,6 +1412,7 @@ class Binder(threading.Thread):
 
             if not success:
                 insert_log('Не доходит SMS. Пробую снова...')
+                self.get_new_number(self.number['tzid'])
                 continue
 
             self.number['is_repeated'] = True
@@ -1495,7 +1498,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.0.2')
+    root.title('Steam Auto Authenticator v1.0.5')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
