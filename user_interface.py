@@ -1,6 +1,6 @@
 from tkinter import *
 from tkinter.filedialog import askopenfilename
-from tkinter.messagebox import showwarning, askyesno
+from tkinter.messagebox import showwarning, askyesno, showinfo
 import datetime
 import os
 import traceback
@@ -83,6 +83,7 @@ class MainWindow:
         self.privacy_settings = {}
         self.email_boxes_data = []
         self.old_accounts = []
+        self.imap_hosts = {}
         self.manifest_data = None
 
         self.autoreg = IntVar()
@@ -91,6 +92,9 @@ class MainWindow:
         self.fold_accounts = IntVar()
         self.use_mail_repeatedly = IntVar()
         self.add_money_to_account = IntVar()
+        self.generate_emails = IntVar()
+        self.remove_emails_from_file = IntVar()
+        self.activate_profile = IntVar()
         self.selection_type = IntVar()
         self.selection_type.set(int(SelectionType.RANDOM))
         self.sms_service_type = IntVar()
@@ -103,11 +107,14 @@ class MainWindow:
         self.captcha_api_key = StringVar()
         self.qiwi_api_key = StringVar()
         self.free_games = StringVar()
+        self.paid_games = StringVar()
         self.new_accounts_amount = IntVar()
         self.accounts_per_number = IntVar()
         self.amount_of_binders = IntVar()
         self.amount_of_binders.set(1)
         self.private_email_boxes = IntVar()
+        self.accounts_per_proxy = IntVar()
+        self.accounts_per_proxy.set(100)
         self.status_bar = StringVar()
         self.country_code = StringVar()
         self.country_code.set('Россия')
@@ -117,6 +124,8 @@ class MainWindow:
         self.money_to_add = IntVar()
         self.captcha_host = StringVar()
         self.onlinesim_host = StringVar()
+        self.imap_host = StringVar()
+        self.email_domains = StringVar()
 
         self.accounts_registrated_stat = StringVar()
         self.accounts_registrated_stat.set("Аккаунтов зарегистрировано:")
@@ -196,7 +205,7 @@ class MainWindow:
                                                    disabledforeground='#808080')
         self.fold_accounts_checkbutton = Checkbutton(tools_frame, text='Раскладывать по папкам',
                                                      variable=self.fold_accounts, disabledforeground='#808080')
-        self.amount_of_binders_label = Label(tools_frame, text='Количество потоков:')
+        self.amount_of_binders_label = Label(tools_frame, text='Количество потоков для привязки:')
         self.amount_of_binders_field = Entry(tools_frame, textvariable=self.amount_of_binders,
                                              disabledforeground='#808080', width=2)
 
@@ -316,8 +325,8 @@ class MainWindow:
         self.mafile_checkbutton.grid(row=3, column=1, pady=1)
         self.fold_accounts_checkbutton.grid(row=4, column=1, pady=1, sticky=W)
         self.add_money_to_account_checkbutton.grid(row=4, column=0, pady=1, sticky=W)
-        self.amount_of_binders_label.grid(row=5, column=1, pady=1, sticky=W)
-        self.amount_of_binders_field.grid(row=5, column=1, pady=1, padx=45, sticky=E)
+        self.amount_of_binders_label.grid(row=5, column=0, pady=1, sticky=W)
+        self.amount_of_binders_field.grid(row=5, column=1, columnspan=2, pady=1, sticky=W)
 
         self.start_button.grid(row=6, pady=10, columnspan=2)
         self.log_label.grid(row=0, column=0, pady=5, sticky=W)
@@ -429,27 +438,79 @@ class MainWindow:
         Button(top, command=activate_code, text="Подтвердить").grid(column=0, columnspan=2, row=1, padx=5, pady=5)
 
     def deploy_additional_settings_window(self):
+        def add_imap_host():
+            if not self.imap_host.get() or not self.email_domains.get():
+                showinfo("Сообщение", "Задайте IMAP сервер и почтовые домены соответствующие ему", parent=top)
+                return
+            self.imap_hosts[self.imap_host.get()] = self.email_domains.get().split(",")
+            showinfo("Сообщение", "IMAP сервер и почтовые домены связанные с ним успешно добавлены", parent=top)
+
+        def list_imap_hosts(top):
+            top = Toplevel(master=top)
+            top.title("IMAP сервера")
+            row = 0
+            for imap_server, email_domains in self.imap_hosts.items():
+                Label(top, text="%s: %s" % (imap_server, ", ".join(email_domains)))\
+                    .grid(column=0, row=row, pady=5)
+                row += 1
+
         top = Toplevel(master=self.frame)
         top.iconbitmap('database/plus-blue.ico')
         top.title("Дополнительные фукнции")
-        Label(top, text="Добавить игры (appid через запятую):").grid(row=0, column=0, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Добавить бесплатные игры (subid через запятую):").grid(row=0, column=0, padx=5, pady=5, sticky=W)
         Entry(top, textvariable=self.free_games, width=30) \
             .grid(row=0, column=1, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Пополнить баланс на аккаунтах").grid(row=1, column=0, padx=5, pady=5, sticky=W)
-        Label(top, text="QIWI Api Key:").grid(row=2, column=0, padx=5, pady=5, sticky=W)
-        Entry(top, textvariable=self.qiwi_api_key, width=30) \
-            .grid(row=2, column=1, padx=5, pady=5, sticky=W)
+        Label(top, text="Купить платные игры (subid через запятую):").grid(row=1, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.paid_games, width=30) \
+            .grid(row=1, column=1, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Сумма (в рублях):").grid(row=3, column=0, padx=5, pady=5, sticky=W)
-        Entry(top, textvariable=self.money_to_add, width=5) \
+        Label(top, text="Пополнить баланс на аккаунтах").grid(row=2, column=0, padx=5, pady=5, sticky=W)
+        Label(top, text="QIWI Api Key:").grid(row=3, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.qiwi_api_key, width=30) \
             .grid(row=3, column=1, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Ключ продукта").grid(row=4, column=0, padx=5, pady=5, sticky=W)
-        Button(top, text="Ввести ключ продукта", command=self.deploy_activation_widgets)\
-            .grid(column=0, row=5, padx=5, pady=5, sticky=W)
+        Label(top, text="Сумма (в рублях):").grid(row=4, column=0, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.money_to_add, width=5) \
+            .grid(row=4, column=1, padx=5, pady=5, sticky=W)
 
-        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=2, row=6, padx=5, pady=5)
+        Label(top, text="Почты").grid(row=5, column=0, padx=5, pady=5, sticky=W)
+        Checkbutton(top, text="Генерировать почты", variable=self.generate_emails) \
+            .grid(row=6, column=0, padx=5, pady=5, sticky=W)
+        Checkbutton(top, text="Удалять использованные почты с файла", variable=self.remove_emails_from_file) \
+            .grid(row=7, column=0, padx=5, pady=5, sticky=W)
+
+        Label(top, text="IMAP сервер:").grid(column=0, row=8, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.imap_host, width=30) \
+            .grid(row=8, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Домены (через запятую без пробелов)").grid(column=0, row=9, padx=5, pady=5, sticky=W)
+        Entry(top, textvariable=self.email_domains, width=30) \
+            .grid(row=9, column=1, padx=5, pady=5, sticky=W)
+
+        Button(top, text="Добавить", command=add_imap_host) \
+            .grid(row=10, column=0, padx=5, pady=5, sticky=W)
+
+        Button(top, text="Просмотреть список IMAP серверов", command=lambda: list_imap_hosts(top)) \
+            .grid(row=10, column=0, columnspan=2, padx=5, pady=5, sticky=E)
+
+        Label(top, text="Аккаунты").grid(row=11, column=0, padx=5, pady=5, sticky=W)
+        Checkbutton(top, text="Активировать профиль аккаунта", variable=self.activate_profile) \
+            .grid(row=12, column=0, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Ключ продукта").grid(row=13, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Ввести ключ продукта", command=self.deploy_activation_widgets)\
+            .grid(column=0, row=14, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Комментарии").grid(row=15, column=0, padx=5, pady=5, sticky=W)
+        Label(top, text="subid игры можно узнать на steamdb.info (например https://steamdb.info/app/730/subs/)"
+                        "\nлибо в исходном коде страницы игры в магазине Steam"
+                        "\n\nГенерировать почты означает, что вы загружаете одну единственную почту\nна которую "
+                        "перенаправляются все письма от сгенерированных",
+              justify=LEFT).grid(column=0, columnspan=2, row=16, padx=5, sticky=W)
+
+        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=2, row=17, padx=5, pady=5)
 
     def deploy_template_window(self):
         top = Toplevel(master=self.frame)
@@ -466,35 +527,39 @@ class MainWindow:
         Entry(top, textvariable=self.nickname_template, width=20)\
             .grid(row=2, column=1, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Выборка элементов списка:").grid(row=3, column=0, padx=5, pady=5, sticky=W)
+        Label(top, text="Если вы хотите, чтобы никнейм генерировался рандомно, то оставьте поле пустым.\n"
+                        "Если вы хотите, чтобы никнейм был таким же, как логин, напишите в поле {login}", justify=LEFT)\
+            .grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Выборка элементов списка:").grid(row=4, column=0, padx=5, pady=5, sticky=W)
         rbttn = Radiobutton(top, text="Рандомная", variable=self.selection_type, value=int(SelectionType.RANDOM))
-        rbttn.grid(column=0, row=4, padx=5, pady=5, sticky=W)
+        rbttn.grid(column=0, row=5, padx=5, pady=5, sticky=W)
         rbttn2 = Radiobutton(top, text="Последовательная", variable=self.selection_type, value=int(SelectionType.CONSISTENT))
-        rbttn2.grid(column=1, row=4, padx=5, pady=5, sticky=W)
+        rbttn2.grid(column=1, row=5, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Реальные имена:").grid(row=5, column=0, padx=5, pady=5, sticky=W)
+        Label(top, text="Реальные имена:").grid(row=6, column=0, padx=5, pady=5, sticky=W)
         Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "real_names_path", "Real names", self.real_names, r".+\n"))\
-            .grid(row=5, column=1, padx=5, pady=5, sticky=W)
-
-        Label(top, text="Страны:").grid(row=6, column=0, padx=5, pady=5, sticky=W)
-        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "countries_path", "Countries", self.countries, r"\w\w\n"))\
             .grid(row=6, column=1, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Аватары:").grid(row=7, column=0, padx=5, pady=5, sticky=W)
-        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "avatars_path", "Avatars", self.avatars, r"https?://.+\n"))\
+        Label(top, text="Страны:").grid(row=7, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "countries_path", "Countries", self.countries, r"\w\w\n"))\
             .grid(row=7, column=1, padx=5, pady=5, sticky=W)
 
-        Label(top, text="Статусы:").grid(row=8, column=0, padx=5, pady=5, sticky=W)
-        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "statuses_path", "Statuses", self.statuses, r".+\n"))\
+        Label(top, text="Аватары:").grid(row=8, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "avatars_path", "Avatars", self.avatars, r"https?://.+\n"))\
             .grid(row=8, column=1, padx=5, pady=5, sticky=W)
+
+        Label(top, text="Статусы:").grid(row=9, column=0, padx=5, pady=5, sticky=W)
+        Button(top, text="Загрузить", relief=GROOVE, command=lambda: self.file_open(top, "statuses_path", "Statuses", self.statuses, r".+\n"))\
+            .grid(row=9, column=1, padx=5, pady=5, sticky=W)
 
         Label(top, text="Примеры шаблона логина (пароля и никнейма):\nmy{num}login либо qwerty{num},\n"
                         "где num автоматически преобразуется программой в порядковое число\n\n"
                         "Страны указываются в формате ISO 3166-1 Alpha 2 (например: RU, US)\n\n"
                         "Аватары: URL ссылки на изображения")\
-            .grid(row=9, columnspan=2, padx=5, pady=5, sticky=W)
+            .grid(row=10, columnspan=2, padx=5, pady=5, sticky=W)
 
-        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=2, row=10, padx=5, pady=5)
+        Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=2, row=11, padx=5, pady=5)
 
     def add_log(self, message):
         self.log_box.insert(END, message)
@@ -591,6 +656,12 @@ class MainWindow:
                 showwarning("Ошибка", "Почты не загружены")
                 return False
 
+            if self.paid_games.get():
+                is_agree = askyesno("Покупка игр", "Вы уверены что хотите покупать игры на аккаунтах?",
+                                    icon='warning')
+                if not is_agree:
+                    return False
+
             if self.add_money_to_account.get():
                 if not self.money_to_add.get():
                     showwarning("Ошибка", "Не указана сумма для пополнения баланса")
@@ -642,12 +713,12 @@ class MainWindow:
     def save_input(self):
         exceptions = ('status_bar', 'license', 'stat', 'quota')
         for field, value in self.__dict__.items():
-            if list(filter(lambda exception: exception in field, exceptions)) and "status" not in field:
+            if list(filter(lambda exception: exception in field, exceptions)) or "status" in field:
                 continue
-            if issubclass(value.__class__, Variable) or 'path' in field:
+            if issubclass(value.__class__, Variable) or 'path' in field or 'imap_hosts' in field:
                 try:
                     value = value.get()
-                except AttributeError:
+                except (AttributeError, TypeError):
                     pass
                 self.userdata[field] = value
 
@@ -772,7 +843,6 @@ class MainWindow:
         top = Toplevel(master=self.frame)
         top.title("Настройка прокси")
         top.iconbitmap('database/proxy.ico')
-        top.geometry('550x355')
         checkbttn = Checkbutton(top, text="Не использовать родной IP если есть прокси", variable=self.dont_use_local_ip)
         checkbttn.grid(column=0, row=0, pady=5, sticky=W)
 
@@ -780,36 +850,39 @@ class MainWindow:
                                  variable=self.pass_login_captcha)
         checkbttn2.grid(column=1, row=0, pady=5, sticky=W)
 
+        Label(top, text='Количество аккаунтов на 1 прокси:').grid(row=1, column=0, pady=5, sticky=W)
+        Entry(top, width=3, textvariable=self.accounts_per_proxy).grid(row=1, column=1, pady=5, padx=5, sticky=W)
+
         lbl = Label(top, text="Тип проксирования:")
-        lbl.grid(column=0, row=1, padx=5, pady=10, sticky=W)
+        lbl.grid(column=0, row=2, padx=5, pady=10, sticky=W)
 
         rbttn1 = Radiobutton(top, command=set_state, text="Искать публичные прокси", variable=self.proxy_type,
                              value=int(Proxy.Public))
-        rbttn1.grid(column=0, row=2, padx=5, pady=5, sticky=W)
+        rbttn1.grid(column=0, row=3, padx=5, pady=5, sticky=W)
 
         rbttn2 = Radiobutton(top, command=set_state, text="Загрузить ссылки на страницы с прокси:",
                              variable=self.proxy_type, value=int(Proxy.Url))
-        rbttn2.grid(column=0, row=3, padx=5, pady=5, sticky=W)
+        rbttn2.grid(column=0, row=4, padx=5, pady=5, sticky=W)
 
         load_proxy_list_bttn = Button(top, state=DISABLED, text="Загрузить", command=lambda: self.proxy_list_open(top),
                                       relief=GROOVE)
-        load_proxy_list_bttn.grid(column=0, row=4, padx=10, pady=5, sticky=W)
+        load_proxy_list_bttn.grid(column=0, row=5, padx=10, pady=5, sticky=W)
         load_proxy_list_bttn.value = int(Proxy.Url)
 
         rbttn3 = Radiobutton(top, command=set_state, text="Загрузить свои прокси:", variable=self.proxy_type,
                              value=int(Proxy.File))
-        rbttn3.grid(column=0, row=5, padx=5, pady=5, sticky=W)
+        rbttn3.grid(column=0, row=6, padx=5, pady=5, sticky=W)
 
         load_proxy_bttn = Button(top, state=DISABLED, text="Загрузить", command=lambda: self.proxy_open(top),
                                  relief=GROOVE)
-        load_proxy_bttn.grid(column=0, row=6, padx=10, pady=5, sticky=W)
+        load_proxy_bttn.grid(column=0, row=7, padx=10, pady=5, sticky=W)
         load_proxy_bttn.value = int(Proxy.File)
 
         rbttn4 = Radiobutton(top, command=set_state, text="Не использовать прокси", variable=self.proxy_type, value=0)
-        rbttn4.grid(column=0, row=7, padx=5, pady=5, sticky=W)
+        rbttn4.grid(column=0, row=8, padx=5, pady=5, sticky=W)
 
         confirm_bttn = Button(top, command=top.destroy, text="Подтвердить")
-        confirm_bttn.grid(column=0, columnspan=2, row=8, padx=5, pady=5)
+        confirm_bttn.grid(column=0, columnspan=2, row=9, padx=5, pady=5)
 
         for rbttn in (rbttn1, rbttn2, rbttn3, rbttn4):
             if self.proxy_type.get() == rbttn.config("value"):
@@ -825,6 +898,11 @@ class MainWindow:
             self.set_countries()
             if event:
                 self.country_code.set("Россия")
+
+                if self.sms_service_type.get() == SmsService.OnlineSim:
+                    self.onlinesim_host.set("onlinesim.ru")
+                elif self.sms_service_type.get() == SmsService.SmsActivate:
+                    self.onlinesim_host.set("sms-activate.ru")
 
             OptionMenu(top, self.country_code, *sorted(self.number_countries.keys())) \
                 .grid(row=5, padx=5, pady=5, sticky=W)
@@ -905,6 +983,8 @@ class MainWindow:
         steamreg.set_captcha_service()
         if not self.check_input():
             return
+        if self.generate_emails.get():
+            self.use_mail_repeatedly.set(1)
         self.update_clock()
         self.is_running = True
         t = threading.Thread(target=self.init_proxy_producing)
@@ -937,7 +1017,7 @@ class MainWindow:
         self.status_bar.set("Чекаю прокси...")
         loop.run_until_complete(self.produce_proxies())
         loop.close()
-        self.status_bar.set("")
+        self.status_bar.set("Создаю аккаунты, решаю капчи...")
         self.add_log("Закончил чекинг прокси")
 
     def accounts_open(self):
@@ -971,7 +1051,7 @@ class MainWindow:
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
 
-        self.email_boxes_path = self.load_file(email_boxes_path, self.email_boxes_data, r"[\d\w\-\.]+@[\d\w]+\.\w+:.+\n?$")
+        self.email_boxes_path = self.load_file(email_boxes_path, self.email_boxes_data, r"[\d\w\-\.]+@[\d\w]+\.\w+:.+\n")
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -1038,10 +1118,12 @@ class MainWindow:
                 for row, item in enumerate(f.readlines()):
                     if regexr and not re.match(regexr, item):
                         self.add_log("Недопустимое значение: {0} в строке {1}".format(item.strip(), row))
+                        if not item.endswith("\n"):
+                            self.add_log("Отсутствует новая строка (нажмите Enter в конце строки)")
                         continue
                     data.append(item.strip())
         except (EnvironmentError, TypeError):
-            showwarning("Ошибка", "Не удается открыть указанный файл", parent=self.parent)
+            # showwarning("Ошибка", "Не удается открыть указанный файл", parent=self.parent)
             return ''
 
         if data:
@@ -1061,10 +1143,20 @@ class MainWindow:
         steamreg.counters_db.sync()
         steamreg.counters_db.close()
 
+        if self.remove_emails_from_file.get():
+            with open(self.email_boxes_path, "w") as f:
+                for email in self.email_boxes_data:
+                    f.write(email + "\n")
+
+        with open("accounts.txt", "w") as f:
+            while not self.accounts.empty():
+                f.write(self.accounts.get() + "\n")
+
         requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
             "registration_quota": self.registration_quota.get(),
             "binding_quota": self.binding_quota.get(),
-            "key": self.software_product_key.get()})
+            "key": self.software_product_key.get()
+        })
 
         self.parent.destroy()
 
@@ -1104,6 +1196,8 @@ class RegistrationThread(threading.Thread):
                 return
             with self.lock:
                 self.left -= 1
+            if self.counter > 0 and self.counter % self.client.accounts_per_proxy.get() == 0:
+                self.set_proxy()
             try:
                 self.registrate_account()
             except (ProxyError, ConnectionError, Timeout):
@@ -1165,14 +1259,15 @@ class RegistrationThread(threading.Thread):
             self.set_proxy()
             return
 
-        if self.client.free_games.get():
-            steam_client.session.get("http://store.steampowered.com")
-        selection_type = self.client.selection_type.get()
-        summary = self.select_profile_data(self.client.statuses, selection_type)
-        real_name = self.select_profile_data(self.client.real_names, selection_type)
-        country = self.select_profile_data(self.client.countries, selection_type)
-        steamreg.activate_account(steam_client, summary, real_name, country)
-        steamreg.edit_profile(steam_client)
+        if self.client.activate_profile.get():
+            selection_type = self.client.selection_type.get()
+            summary = self.select_profile_data(self.client.statuses, selection_type)
+            real_name = self.select_profile_data(self.client.real_names, selection_type)
+            country = self.select_profile_data(self.client.countries, selection_type)
+            steamreg.activate_account(steam_client, summary, real_name, country)
+            steamreg.edit_profile(steam_client)
+            self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
+
         if self.client.avatars:
             if self.client.selection_type.get() == SelectionType.RANDOM:
                 avatar = random.choice(self.client.avatars)
@@ -1193,10 +1288,14 @@ class RegistrationThread(threading.Thread):
 
         if self.client.add_money_to_account.get():
             self.add_money(login)
-        if self.client.free_games.get():
-            self.add_games(steam_client)
 
-        self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
+        if self.client.free_games.get() or self.client.paid_games.get():
+            steam_client.session.get("http://store.steampowered.com")
+        if self.client.free_games.get():
+            self.add_free_games(steam_client)
+        if self.client.paid_games.get():
+            self.purchase_games(steam_client)
+
         account = Account(login, passwd, email, email_password)
         self.client.accounts.put(account)
         self.counter += 1
@@ -1220,7 +1319,7 @@ class RegistrationThread(threading.Thread):
             self.client.add_log("Regger: Использую local ip")
         self.proxy = proxy
 
-    def add_games(self, steam_client):
+    def add_free_games(self, steam_client):
         appids = self.client.free_games.get().replace(" ", "").split(",")
         data = {
             'action': 'add_to_cart',
@@ -1228,7 +1327,37 @@ class RegistrationThread(threading.Thread):
         }
         for subid in appids:
             data['subid'] = int(subid)
-            steam_client.session.post('https://store.steampowered.com/checkout/addfreelicense', data=data)
+            resp = steam_client.session.post('https://store.steampowered.com/checkout/addfreelicense', data=data)
+
+    def purchase_games(self, steam_client):
+        appids = self.client.paid_games.get().replace(" ", "").split(",")
+        sessionid = steam_client.session.cookies.get('sessionid', domain='store.steampowered.com')
+        data = {"action": "add_to_cart", "sessionid": sessionid, "snr": "1_5_9__403"}
+        for appid in appids:
+            data["subid"] = int(appid)
+            resp = steam_client.session.post("https://store.steampowered.com/cart/", data=data)
+        resp = steam_client.session.get("https://store.steampowered.com/checkout/?purchasetype=self",
+                                        params={"purchasetype": "self"})
+        cart_id = re.search(r"id=\"shopping_cart_gid\" value=\"(\d+)\">", resp.text).group(1)
+        data = {
+            "gidShoppingCart": cart_id,
+            "gidReplayOfTransID": -1,
+            "PaymentMethod": "steamaccount",
+            "abortPendingTransactions": 0,
+            "bHasCardInfo": 0,
+            "Country": "RU",
+            "bIsGift": 0,
+            "GifteeAccountID": 0,
+            "ScheduledSendOnDate": 0,
+            "bSaveBillingAddress": 1,
+            "bUseRemainingSteamAccount": 1,
+            "bPreAuthOnly": 0,
+            "sessionid": sessionid
+        }
+        resp = steam_client.session.post("https://store.steampowered.com/checkout/inittransaction/", data=data).json()
+        trans_id = resp["transid"]
+        resp = steam_client.session.post("https://store.steampowered.com/checkout/finalizetransaction/",
+                                         data={"transid": trans_id})
 
     def add_money(self, login):
         wallet = pyqiwi.Wallet(token=self.client.qiwi_api_key.get())
@@ -1282,6 +1411,8 @@ class Binder(threading.Thread):
             quota_expired = self.quota_queue.get()
             if quota_expired:
                 return
+            if self.binded_counter > 0 and self.binded_counter % self.client.accounts_per_proxy.get() == 0:
+                self.set_proxy()
             pack = []
             with self.lock:
                 self.fill_pack(pack)
@@ -1368,9 +1499,10 @@ class Binder(threading.Thread):
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
         self.client.binding_quota.set(self.client.binding_quota.get() - 1)
-        if not self.client.autoreg.get():
+        if not self.client.autoreg.get() and self.client.activate_profile.get():
             steamreg.activate_account(steam_client, "", "", "")
             steamreg.edit_profile(steam_client)
+            self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
         insert_log('Guard успешно привязан')
         self.binded_counter += 1
         self.client.accounts_binded_stat.set("Аккаунтов привязано: %d" % self.binded_counter)
@@ -1498,7 +1630,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.0.5')
+    root.title('Steam Auto Authenticator v1.2.0')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
