@@ -48,7 +48,9 @@ class MainWindow:
         self.binding_quota = IntVar()
         with open('database/userdata.txt', 'r') as f:
             self.userdata = json.load(f)
-
+        with open('accounts.txt', 'r') as f:
+            self.accounts_unbinded = [row.strip() for row in f.readlines()]
+        self.accounts_binded = []
         success = self.authorize_user()
         if not success:
             self.deploy_activation_widgets()
@@ -592,6 +594,7 @@ class MainWindow:
                 t = Binder(self, sms_service, self.accounts_per_number.get(), quota_queue)
                 t.start()
                 bind_threads.append(t)
+
         if self.autoreg.get():
             reg_threads = self.init_threads(new_accounts_amount)
             Binder.total_amount = self.new_accounts_amount.get()
@@ -1017,7 +1020,7 @@ class MainWindow:
         self.status_bar.set("Чекаю прокси...")
         loop.run_until_complete(self.produce_proxies())
         loop.close()
-        self.status_bar.set("Создаю аккаунты, решаю капчи...")
+        self.status_bar.set("Работаю...")
         self.add_log("Закончил чекинг прокси")
 
     def accounts_open(self):
@@ -1040,6 +1043,8 @@ class MainWindow:
                 login, password = item.split(':')[:2]
             account = Account(login, password, email, email_password)
             self.accounts.put(account)
+            if item not in self.accounts_unbinded:
+                self.accounts_unbinded.append(item)
         RegistrationThread.is_alive = False
 
     def email_boxes_open(self):
@@ -1149,8 +1154,11 @@ class MainWindow:
                     f.write(email + "\n")
 
         with open("accounts.txt", "w") as f:
-            while not self.accounts.empty():
-                f.write(self.accounts.get() + "\n")
+            for account in self.accounts_unbinded:
+                login_passwd = account.split(":")[:2]
+                login_passwd = ":".join(login_passwd)
+                if login_passwd not in self.accounts_binded:
+                    f.write(account + "\n")
 
         requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
             "registration_quota": self.registration_quota.get(),
@@ -1471,6 +1479,8 @@ class Binder(threading.Thread):
             self.set_proxy()
             return
         except SteamAuthError as err:
+            if "К аккаунту уже привязан Guard" in str(err):
+                self.client.accounts_binded.append(login + ":" + passwd)
             insert_log(err)
             return
         except CaptchaRequired as err:
@@ -1507,6 +1517,7 @@ class Binder(threading.Thread):
         self.binded_counter += 1
         self.client.accounts_binded_stat.set("Аккаунтов привязано: %d" % self.binded_counter)
         self.client.accounts_binded_stat.set("Осталось аккаунтов привязать: %d" % (self.binding_total - self.binded_counter))
+        self.client.accounts_binded.append(login + ":" + passwd)
 
     def add_authenticator(self, insert_log, steam_client):
         while True:
