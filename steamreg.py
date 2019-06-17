@@ -12,14 +12,14 @@ import imaplib
 import collections
 
 from requests.exceptions import Timeout, ConnectionError, ProxyError
-from python_anticaptcha import AnticaptchaClient, ImageToTextTask
+from python_anticaptcha import AnticaptchaClient, ImageToTextTask, NoCaptchaTaskProxylessTask
 
 from steampy.client import SteamClient
 from steampy.login import CaptchaRequired, AuthException
 from steampy.utils import convert_edomain_to_imap
 from steampy import guard
 
-from enums import CaptchaService
+from enums import CaptchaService, SelectionType
 
 logger = logging.getLogger('__main__')
 
@@ -311,17 +311,6 @@ class SteamRegger:
             return key
 
     def create_account_web(self, proxy=None):
-        def send_captcha(gid, captcha_text, email):
-            data = {
-                'captchagid': gid,
-                'captcha_text': captcha_text,
-                'email': email,
-                'count': '1'
-            }
-            resp = self.request_post(session, 'https://store.steampowered.com/join/verifycaptcha', data=data)
-            logger.info(resp)
-            return resp
-
         session = requests.Session()
         if proxy:
             proxy_uri = self.build_uri(proxy)
@@ -351,21 +340,17 @@ class SteamRegger:
                 email_generated_name = login_name + "@" + domain
             email = Email(email_name, email_password, email_generated_name)
             logger.info("Using email: %s" % email.generated_name)
+
             while True:
-                gid = self.request_get(session, 'https://store.steampowered.com/join/refreshcaptcha/?count=1',
-                                       headers={'Host': 'store.steampowered.com'}, timeout=30, is_json=True)['gid']
-                captcha_id = self.generate_captcha(session, gid, "STORE")
+                response = self.request_get(session, 'https://store.steampowered.com/join/refreshcaptcha/?count=1',
+                                            headers={'Host': 'store.steampowered.com'},
+                                            timeout=30, is_json=True)
+                gid, sitekey = response['gid'], response['sitekey']
+                captcha_id = self.captcha_service.generate_recaptcha(sitekey)
                 captcha_text = self.resolve_captcha(captcha_id)
                 if not captcha_text:
                     continue
-                logger.info("Resolving captcha... %s", login_name)
-                resp = send_captcha(gid, captcha_text, email.generated_name)
-                if not resp['bCaptchaMatches']:
-                    logger.info("Captcha text is wrong: %s", captcha_text)
-                    self.captcha_service.report_bad(captcha_id)
-                else:
-                    break
-
+                break
             logger.info("Confirming email... %s", login_name)
             try:
                 creationid = self.confirm_email(session, gid, captcha_text, email)
@@ -391,29 +376,18 @@ class SteamRegger:
 
     def resolve_captcha(self, captcha_id):
         result = self.captcha_service.resolve_captcha(captcha_id)
+        logger.info("Resolved captcha: %s", result)
         if result is None:
             return result
         try:
-            status, resolved_captcha, price = result
+            status, token, price = result
         except ValueError:
-            status, resolved_captcha = result
+            status, token = result
             price = 0
 
         self.captchas_expenses_total += float(price)
         self.client.captchas_expenses_stat.set("Потрачено на капчи: %d" % self.captchas_expenses_total)
-        resolved_captcha = resolved_captcha.replace('amp;', '')
-        return resolved_captcha
-
-    def generate_captcha(self, session, gid, domain):
-        if domain == "STORE":
-            url = 'https://store.steampowered.com/login/rendercaptcha/?gid={}'
-        elif domain == "COMMUNITY":
-            url = 'https://steamcommunity.com/login/rendercaptcha/?gid={}'
-        else:
-            raise Exception("WRONG domain")
-        captcha_img = self.request_get(session, url.format(gid), timeout=30).content
-        captcha_id = self.captcha_service.generate_captcha(captcha_img)
-        return captcha_id
+        return token
 
     def confirm_email(self, session, gid, captcha_text, email):
         data = {
@@ -486,6 +460,17 @@ class SteamRegger:
         if not uppercase:
             credential = credential.lower()
         return credential
+
+    def generate_captcha(self, session, gid, domain):
+        if domain == "STORE":
+            url = 'https://store.steampowered.com/login/rendercaptcha/?gid={}'
+        elif domain == "COMMUNITY":
+            url = 'https://steamcommunity.com/login/rendercaptcha/?gid={}'
+        else:
+            raise Exception("WRONG domain")
+        captcha_img = self.request_get(session, url.format(gid), timeout=30).content
+        captcha_id = self.captcha_service.generate_captcha_img(captcha_img)
+        return captcha_id
 
     def activate_account(self, steam_client, summary, real_name, country):
         nickname = self.generate_credential(2, 4, uppercase=False)
@@ -613,6 +598,18 @@ class SteamRegger:
         server.close()
         raise InvalidEmail("Не удается получить письмо от Steam")
 
+    @staticmethod
+    def select_profile_data(data, type):
+        result = ""
+        if data:
+            if type == SelectionType.RANDOM:
+                result = random.choice(data)
+            elif type == SelectionType.CONSISTENT:
+                result = data.pop(0)
+                data.append(result)
+
+        return result
+
 
 class RuCaptcha:
 
@@ -637,7 +634,7 @@ class RuCaptcha:
 
         return resp.text
 
-    def generate_captcha(self, captcha_img):
+    def generate_captcha_img(self, captcha_img):
         resp = requests.post(self.host % 'in.php',
                              files={'file': ('captcha', captcha_img, 'image/png')},
                              data={'key': self.api_key},
@@ -646,9 +643,17 @@ class RuCaptcha:
         captcha_id = resp.text.partition('|')[2]
         return captcha_id
 
+    def generate_recaptcha(self, sitekey):
+        resp = requests.post(self.host % 'in.php',
+                             data={'key': self.api_key, 'method': 'userrecaptcha', 'googlekey': sitekey,
+                                   'pageurl': 'https://store.steampowered.com/join/refreshcaptcha/?count=1'},
+                             timeout=30)
+        captcha_id = resp.text.partition('|')[2]
+        return captcha_id
+
     def resolve_captcha(self, captcha_id):
         while True:
-            time.sleep(10)
+            time.sleep(5)
             r = requests.post(self.host % 'res.php' + '?key={}&action=get2&id={}'
                               .format(self.api_key, captcha_id), timeout=30)
             logger.info(r.text)
@@ -677,8 +682,14 @@ class AntiCaptcha(AnticaptchaClient):
     def get_balance(self):
         return self.getBalance()
 
-    def generate_captcha(self, captcha_img):
+    def generate_captcha_img(self, captcha_img):
         task = ImageToTextTask(io.BytesIO(captcha_img))
+        job = self.createTask(task)
+        return job
+
+    def generate_recaptcha(self, sitekey):
+        task = NoCaptchaTaskProxylessTask("https://store.steampowered.com/join/refreshcaptcha/?count=1",
+                                          sitekey)
         job = self.createTask(task)
         return job
 

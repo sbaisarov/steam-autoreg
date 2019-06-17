@@ -67,9 +67,12 @@ class OnlineSimApi:
             raise OnlineSimError(resp.text)
         if not time_left:
             raise OnlineSimError(resp[0])
-        return sms_code
+        return sms_code, time_left
 
-    def set_operation_ok(self, tzid):
+    def set_operation_ok(self, tzid, time):
+        now = int(time.time())
+        if now - time < 125:
+            time.sleep(125 - (now - time))
         url = self.base_url % 'api/setOperationOk.php'
         data = {'tzid': tzid, 'apikey': self.api_key}
         self._send_request(url, data)

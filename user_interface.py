@@ -26,6 +26,10 @@ if not os.path.exists('database/userdata.txt'):
     with open('database/userdata.txt', 'w') as f:
         f.write('{}')
 
+if not os.path.exists('accounts.txt'):
+    with open('accounts.txt', 'w') as f:
+        pass
+
 if not os.path.exists("database/imap-hosts.json"):
     with open("database/imap-hosts.json", "w") as f:
         f.write("{}")
@@ -54,6 +58,8 @@ class MainWindow:
         success = self.authorize_user()
         if not success:
             self.deploy_activation_widgets()
+        self.reg_condition = None
+        self.binding_condition = None
 
         self.queue = asyncio.Queue(loop=loop)
         self.accounts = Queue()
@@ -212,9 +218,12 @@ class MainWindow:
                                              disabledforeground='#808080', width=2)
 
         self.start_button = Button(tools_frame, text='Начать', command=self.start_process,
-                                   bg='#CEC8C8', relief=GROOVE, width=50)
-        tools_frame.grid(row=1, column=0, pady=5)
+                                   bg='#CEC8C8', relief=GROOVE, width=25)
 
+        self.stop_button = Button(tools_frame, text='Остановить', command=self.stop_process,
+                                  bg='#CEC8C8', relief=GROOVE, width=25)
+
+        tools_frame.grid(row=1, column=0, pady=5)
         log_frame = Frame(self.parent)
         self.log_label = Label(log_frame, text='Логи:')
         self.scrollbar = Scrollbar(log_frame, orient=VERTICAL)
@@ -330,7 +339,8 @@ class MainWindow:
         self.amount_of_binders_label.grid(row=5, column=0, pady=1, sticky=W)
         self.amount_of_binders_field.grid(row=5, column=1, columnspan=2, pady=1, sticky=W)
 
-        self.start_button.grid(row=6, pady=10, columnspan=2)
+        self.start_button.grid(row=6, pady=10, column=0)
+        self.stop_button.grid(row=6, pady=10, column=1)
         self.log_label.grid(row=0, column=0, pady=5, sticky=W)
         self.log_box.grid(row=1, column=0, sticky=NSEW)
         self.scrollbar.grid(row=1, column=1, sticky=NS)
@@ -982,6 +992,12 @@ class MainWindow:
 
     def start_process(self):
         if self.is_running:
+            RegistrationThread.lock.release()
+            Binder.lock.release()
+            self.status_bar.set("В процессе...")
+            return
+
+        if self.is_running:
             return
         steamreg.set_captcha_service()
         if not self.check_input():
@@ -997,6 +1013,11 @@ class MainWindow:
         t = threading.Thread(target=self.run_process)
         t.daemon = True
         t.start()
+
+    def stop_process(self):
+        RegistrationThread.lock.acquire(blocking=False)
+        Binder.lock.acquire(blocking=False)
+        self.status_bar.set("Остановлено")
 
     def init_proxy_producing(self):
         proxy_type = self.proxy_type.get()
@@ -1269,9 +1290,9 @@ class RegistrationThread(threading.Thread):
 
         if self.client.activate_profile.get():
             selection_type = self.client.selection_type.get()
-            summary = self.select_profile_data(self.client.statuses, selection_type)
-            real_name = self.select_profile_data(self.client.real_names, selection_type)
-            country = self.select_profile_data(self.client.countries, selection_type)
+            summary = steamreg.select_profile_data(self.client.statuses, selection_type)
+            real_name = steamreg.select_profile_data(self.client.real_names, selection_type)
+            country = steamreg.select_profile_data(self.client.countries, selection_type)
             steamreg.activate_account(steam_client, summary, real_name, country)
             steamreg.edit_profile(steam_client)
             self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
@@ -1344,7 +1365,7 @@ class RegistrationThread(threading.Thread):
         for appid in appids:
             data["subid"] = int(appid)
             resp = steam_client.session.post("https://store.steampowered.com/cart/", data=data)
-        resp = steam_client.session.get("https://store.steampowered.com/checkout/?purchasetype=self",
+        resp = steam_client.session.get("ps://store.steampowered.com/checkout/?purchasetype=self",
                                         params={"purchasetype": "self"})
         cart_id = re.search(r"id=\"shopping_cart_gid\" value=\"(\d+)\">", resp.text).group(1)
         data = {
@@ -1371,17 +1392,6 @@ class RegistrationThread(threading.Thread):
         wallet = pyqiwi.Wallet(token=self.client.qiwi_api_key.get())
         payment = wallet.send(pid="25549", recipient=login, amount=int(self.client.money_to_add.get()))
 
-    @staticmethod
-    def select_profile_data(data, type):
-        result = ""
-        if data:
-            if type == SelectionType.RANDOM:
-                result = random.choice(data)
-            elif type == SelectionType.CONSISTENT:
-                result = data.pop(0)
-                data.append(result)
-
-        return result
 
     @staticmethod
     def save_unattached_account(login, passwd, email, email_password):
@@ -1447,9 +1457,10 @@ class Binder(threading.Thread):
                         showwarning("Ошибка %s" % err.__class__.__name__, err)
                         logger.critical(traceback.format_exc())
                         self.error = True
+                self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
                 return
 
-            self.sms_service.set_operation_ok(self.number['tzid'])
+            self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
 
     def fill_pack(self, pack):
         for _ in range(self.amount):
@@ -1510,7 +1521,11 @@ class Binder(threading.Thread):
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
         self.client.binding_quota.set(self.client.binding_quota.get() - 1)
         if not self.client.autoreg.get() and self.client.activate_profile.get():
-            steamreg.activate_account(steam_client, "", "", "")
+            selection_type = self.client.selection_type.get()
+            summary = steamreg.select_profile_data(self.client.statuses, selection_type)
+            real_name = steamreg.select_profile_data(self.client.real_names, selection_type)
+            country = steamreg.select_profile_data(self.client.countries, selection_type)
+            steamreg.activate_account(steam_client, summary, real_name, country)
             steamreg.edit_profile(steam_client)
             self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
         insert_log('Guard успешно привязан')
@@ -1523,6 +1538,10 @@ class Binder(threading.Thread):
         while True:
             insert_log('Делаю запрос Steam на добавление номера...')
             response = steamreg.addphone_request(steam_client, self.number['number'])
+            status = response["status"]
+            if status == 73:
+                raise SteamAuthError('Аккаунт заблокирован')
+
             if not response['success']:
                 if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
                     insert_log('Стим сообщил о том что, ему не удалось отправить SMS')
@@ -1541,7 +1560,7 @@ class Binder(threading.Thread):
                     if self.number['is_repeated']:
                         self.sms_service.request_repeated_number_usage(self.number['tzid'])
                     attempts += 1
-                    sms_code = self.sms_service.get_sms_code(self.number['tzid'])
+                    sms_code, _ = self.sms_service.get_sms_code(self.number['tzid'])
                     if sms_code and sms_code not in self.used_codes:
                         self.used_codes.append(sms_code)
                         success = True
@@ -1570,13 +1589,13 @@ class Binder(threading.Thread):
 
     def get_new_number(self, tzid=0):
         if tzid:
-            self.sms_service.set_operation_ok(tzid)
+            self.sms_service.set_operation_ok(tzid, self.number['time'])
             self.used_codes.clear()
         is_repeated = False
         self.numbers_ordered_counter += 1
         self.client.numbers_used_stat.set("Использовано номеров: %s" % self.numbers_ordered_counter)
         tzid, number = self.sms_service.get_number(country=self.client.number_countries[self.client.country_code.get()])
-        self.number = {'tzid': tzid, 'number': number, 'is_repeated': is_repeated}
+        self.number = {'tzid': tzid, 'number': number, 'is_repeated': is_repeated, 'time': int(time.time())}
 
     def save_attached_account(self, mobguard_data, account, number, offer_link):
         if self.client.autoreg.get():
@@ -1641,7 +1660,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.2.0')
+    root.title('Steam Auto Authenticator v1.3.0')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
