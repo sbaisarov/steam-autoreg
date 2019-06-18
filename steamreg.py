@@ -697,7 +697,11 @@ class AntiCaptcha(AnticaptchaClient):
     def resolve_captcha(job):
         job.join()
         status, price = job._last_result["status"], job._last_result["cost"]
-        return status, job.get_captcha_text(), price
+        try:
+            solution = job.get_solution_response()  # ReCaptcha
+        except KeyError:
+            solution = job.get_captcha_text()
+        return status, solution, price
 
     def report_bad(self, job):
         self.reportIncorrectImage(job.task_id)
