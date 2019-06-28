@@ -1392,7 +1392,6 @@ class RegistrationThread(threading.Thread):
         wallet = pyqiwi.Wallet(token=self.client.qiwi_api_key.get())
         payment = wallet.send(pid="25549", recipient=login, amount=int(self.client.money_to_add.get()))
 
-
     @staticmethod
     def save_unattached_account(login, passwd, email, email_password):
         with open('accounts.txt', 'a+') as f:
@@ -1425,6 +1424,7 @@ class Binder(threading.Thread):
 
     def run(self):
         self.set_proxy()
+        self.client.status_bar.set("Привязываю мобильный аутентификатор")
         while True:
             quota_expired = self.quota_queue.get()
             if quota_expired:
@@ -1538,9 +1538,9 @@ class Binder(threading.Thread):
         while True:
             insert_log('Делаю запрос Steam на добавление номера...')
             response = steamreg.addphone_request(steam_client, self.number['number'])
-            status = response["status"]
-            if status == 73:
-                raise SteamAuthError('Аккаунт заблокирован')
+            # status = response["status"]
+            # if status == 73:
+            #     raise SteamAuthError('Аккаунт заблокирован')
 
             if not response['success']:
                 if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
@@ -1581,7 +1581,9 @@ class Binder(threading.Thread):
 
             insert_log('Делаю запрос на привязку гуарда...')
             mobguard_data = steamreg.add_authenticator_request(steam_client)
+            logger.info("mobguard data: %s", mobguard_data)
             response = steamreg.checksms_request(steam_client, sms_code)
+            logger.info(response)
             if 'The SMS code is incorrect' in response.get('error_text', ''):
                 insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
                 continue
@@ -1660,7 +1662,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.3.0')
+    root.title('Steam Auto Authenticator v1.3.2')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 

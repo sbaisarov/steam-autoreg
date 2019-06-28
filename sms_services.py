@@ -69,10 +69,10 @@ class OnlineSimApi:
             raise OnlineSimError(resp[0])
         return sms_code, time_left
 
-    def set_operation_ok(self, tzid, time):
+    def set_operation_ok(self, tzid, time_start):
         now = int(time.time())
-        if now - time < 125:
-            time.sleep(125 - (now - time))
+        if now - time_start < 125:
+            time.sleep(125 - (now - time_start))
         url = self.base_url % 'api/setOperationOk.php'
         data = {'tzid': tzid, 'apikey': self.api_key}
         self._send_request(url, data)
@@ -150,7 +150,7 @@ class SmsActivateApi:
         number = '+' + number
         return id, number
 
-    def set_operation_ok(self, id):
+    def set_operation_ok(self, id, time_start):
         self._set_status(id, 6)
 
     def request_repeated_number_usage(self, id):
@@ -177,5 +177,5 @@ class SmsActivateApi:
         except AttributeError:
             sms_code = ''
 
-        return sms_code
+        return sms_code, None
 
