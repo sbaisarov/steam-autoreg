@@ -1,22 +1,24 @@
+import asyncio
+import datetime
+import os
+import threading
+import traceback
+from collections import namedtuple
+from queue import Queue, Empty
 from tkinter import *
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning, askyesno, showinfo
-import datetime
-import os
-import traceback
-import threading
-import asyncio
-from collections import namedtuple
-from queue import Queue, Empty
-from proxybroker import Broker
-import pyqiwi
 
+import cert_human
+import pyqiwi
+from proxybroker import Broker
+
+from enums import *
 from sms_services import *
 from steamreg import *
-from enums import *
-
 
 logger = logging.getLogger('__main__')
+cert_human.enable_urllib3_patch()
 
 for dir_name in ('новые_аккаунты', 'загруженные_аккаунты'):
     if not os.path.exists(dir_name):
@@ -38,6 +40,13 @@ with open("database/interface_states.json", "r") as f:
     STATES = json.load(f)
 
 loop = asyncio.get_event_loop()
+PUBLIC_KEY = ("C464E92A6E1EA42B00E5B47BC3AD33069BAAF7DC59F9908E18B0C85839D539F6A3E11162CEBDA09412387EA895F232B6D79CE7BB"
+        "9B8CB04F5B63044F33EEA53345531A168F0E4D3BF16A9493E8D3ECCAE6EA1503E63776BFE640CABE0ADCAD52DEF695B6F90E12FA4EA22B17D129A15"
+        "A409B1C23544F5F8A155D01B4A1EB5FAA1EDE91A8AD6C7C5B908E08216F34DAB94189A83E865413DE3706E478E7BECD5382415E493E13BAC4F031ED"
+        "3CCFC2BDA69483F0D663875E2E049D4E7DEE45BEEAF9DC7504A78174025B10148FF158B9CD47C3D952D18AF929038B6A4113BC1F55F3BF408D4F6D0"
+        "B9F3E38F69319BDFE227866F38A3935532784B1A59722F91B31"
+)
+
 Account = namedtuple("Account", ['login', 'password', 'email', 'email_password'])
 
 
@@ -426,12 +435,16 @@ class MainWindow:
         def activate_code():
             resp = requests.get("https://shamanovski.pythonanywhere.com/validatecode", params={
                 "key": self.software_product_key.get(), "uniquecode": code.get()
-            }).json()
-            message = resp["message"]
-            success = resp["success"]
+            })
+            response_as_dictionary = resp.json()
+            message = response_as_dictionary["message"]
+            success = response_as_dictionary["success"]
+            store = cert_human.CertStore.from_response(response=resp)
+            if store.public_key != PUBLIC_KEY:
+                success = False
             if success:
-                quota = resp["quota"]
-                amount = resp["amount"] * 10
+                quota = response_as_dictionary["quota"]
+                amount = response_as_dictionary["amount"]
                 if quota == "registration_quota":
                     self.registration_quota.set(self.registration_quota.get() + amount)
                 elif quota == "binding_quota":
@@ -639,7 +652,7 @@ class MainWindow:
             return False
 
         if self.autoreg.get():
-            if self.registration_quota.get() == 0:
+            if self.registration_quota.get() <= 0:
                 showwarning("Ошибка", "Отсутсвтует квота на регистрацию. "
                                       "Оплатите за квоту чтобы регистрировать аккаунты")
                 return False
@@ -690,7 +703,7 @@ class MainWindow:
                     return False
 
         if self.mobile_bind.get():
-            if self.binding_quota.get() == 0:
+            if self.binding_quota.get() <= 0:
                 showwarning("Ошибка", "Отсутсвтует квота на привязку. Оплатите за квоту чтобы привязывать аккаунты")
                 return False
             try:
@@ -754,11 +767,15 @@ class MainWindow:
         if os.path.exists('database/key.txt'):
             with open('database/key.txt', 'r') as f:
                 user_data = json.load(f)
-            url = 'https://shamanovski.pythonanywhere.com/'
+            url = 'https://shamanovski.pythonanywhere.com/authorize_user'
             data = {
                 'key': user_data['key']
             }
-            resp = requests.post(url, data=data, timeout=10, attempts=3).json()
+            resp = requests.post(url, data=data, timeout=10, attempts=3)
+            store = cert_human.CertStore.from_response(response=resp)
+            if store.public_key != PUBLIC_KEY:
+                return False
+            resp = resp.json()
             self.registration_quota.set(resp["data"]["registration_quota"])
             self.binding_quota.set(resp["data"]["binding_quota"])
         else:
@@ -772,6 +789,10 @@ class MainWindow:
             showwarning("Ошибка", "Укажите логин")
             return
         resp = requests.get("https://shamanovski.pythonanywhere.com/generate-product-key", params={"login": login})
+        store = cert_human.CertStore.from_response(response=resp)
+        if store.public_key != PUBLIC_KEY:
+            showwarning("Ошибка", "")
+            return False
         if resp.status_code == 406:
             showwarning("Ошибка", "Логин уже используется. Пожалуйста введите другой")
             return
@@ -782,12 +803,16 @@ class MainWindow:
         if not key:
             showwarning('Ошибка', 'Укажите ключ продукта', parent=self.parent)
             return
-        url = 'https://shamanovski.pythonanywhere.com/'
+        url = 'https://shamanovski.pythonanywhere.com/authorize_user'
         data = {
             'key': key
         }
-        resp = requests.post(url, data=data, timeout=10, attempts=3).json()
-
+        resp = requests.post(url, data=data, timeout=10, attempts=3)
+        store = cert_human.CertStore.from_response(response=resp)
+        if store.public_key != PUBLIC_KEY:
+            showwarning("Ошибка", "")
+            return
+        resp = resp.json()
         if not resp['success_x001']:
             showwarning('Ошибка', 'Ключ не найден в базе данных. Введите ключ корректно либо сгенерируйте новый',
                         parent=self.parent)
@@ -1181,12 +1206,6 @@ class MainWindow:
                 if login_passwd not in self.accounts_binded:
                     f.write(account + "\n")
 
-        requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
-            "registration_quota": self.registration_quota.get(),
-            "binding_quota": self.binding_quota.get(),
-            "key": self.software_product_key.get()
-        })
-
         self.parent.destroy()
 
     def check_templates(self):
@@ -1266,6 +1285,10 @@ class RegistrationThread(threading.Thread):
         self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, passwd))
 
         with self.lock:
+            requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
+                "quota": "registration_quota",
+                "key": self.client.software_product_key.get()
+            })
             self.save_unattached_account(login, passwd, email, email_password)
             self.client.registration_quota.set(self.client.registration_quota.get() - 1)
         try:
@@ -1518,6 +1541,10 @@ class Binder(threading.Thread):
         steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
         mobguard_data['account_password'] = passwd
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
+        requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
+            "quota": "binding_quota",
+            "key": self.client.software_product_key.get()
+        })
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
         self.client.binding_quota.set(self.client.binding_quota.get() - 1)
         if not self.client.autoreg.get() and self.client.activate_profile.get():
@@ -1662,7 +1689,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.3.2')
+    root.title('Steam Auto Authenticator v1.4.0')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
