@@ -12,5 +12,5 @@ else:
     raise ValueError("The feature doesn't exist")
 
 
-resp = requests.post("http://shamanovski.pythonanywhere.com/addquota", data=data, auth="beka9982")
+resp = requests.post("http://shamanovski.pythonanywhere.com/addquota", data=data, auth=("shamanovsky" ,"beka9982"))
 print(resp.text)

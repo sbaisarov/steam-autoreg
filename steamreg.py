@@ -29,6 +29,7 @@ class SteamRuCaptchaError(Exception): pass
 class RuCaptchaError(Exception): pass
 class LimitReached(Exception): pass
 class InvalidEmail(Exception): pass
+class AddPhoneError(Exception): pass
 
 
 class SteamRegger:
@@ -162,7 +163,50 @@ class SteamRegger:
                         login_name, password)
             raise SteamAuthError(error)
 
+        steam_client.session.get("https://store.steampowered.com")  # get store cookies
+
         return steam_client
+
+    def validate_phone(self, steam_client, phone_num):
+        sessionid = steam_client.session.cookies.get(
+            'sessionid', domain='store.steampowered.com')
+        url = "https://store.steampowered.com/phone/validate"
+        data = {"sessionID": sessionid, "phoneNumber": phone_num}
+        response = self.request_post(steam_client.session,
+                                     url, data=data)
+        if not response.get("is_valid", True):
+            raise AddPhoneError
+
+    def addphone_request_email(self, steam_client, phone_num):
+        sessionid = steam_client.session.cookies.get(
+            'sessionid', domain='store.steampowered.com')
+        url = "https://store.steampowered.com/phone/add_ajaxop"
+        data = {
+            "op": "get_phone_number",
+            "input": phone_num,
+            "sessionID": sessionid,
+            "confirmed": "1",
+            "checkfortos": "1",
+            "bisediting": "0",
+            "token": "0"
+        }
+        response = self.request_post(steam_client.session,
+                                     url, data=data)
+        if not response.get("success", None):
+            raise AddPhoneError
+
+        # ANSWER
+        # {
+        #     "success": true,
+        #     "showResend": false,
+        #     "state": "email_verification",
+        #     "errorText": "",
+        #     "token": "0",
+        #     "phoneNumber": "+79524762655"
+        # }
+
+        logger.info(response)
+        return response
 
     def addphone_request(self, steam_client, phone_num):
         sessionid = steam_client.session.cookies.get(
@@ -176,6 +220,25 @@ class SteamRegger:
                                      'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(response)
         return response
+
+    def fetch_email_code(self, email, email_password, steam_client):
+        server = self.authorize_email(email, email_password)
+        attempts = 0
+        while attempts < 5:
+            attempts += 1
+            result, data = server.uid("search", None, 'ALL')
+            uid = data[0].split()[-1]
+            result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
+            try:
+                mail = data[0][1].decode('utf-8')
+                link = re.search(r'https://.+ConfirmEmailForAdd.+(?:")', mail).group(1)
+                steam_client.session.get(link)
+            except AttributeError:
+                time.sleep(5)
+                continue
+            time.sleep(5)
+        server.close()
+        raise InvalidEmail("Не удается получить письмо от Steam")
 
     def is_phone_attached(self, steam_client):
         sessionid = steam_client.session.cookies.get(
@@ -196,6 +259,40 @@ class SteamRegger:
 
         return response['has_phone']
 
+    def checksms_request_email(self, steam_client, sms_code):
+        url = "https://store.steampowered.com/phone/add_ajaxop"
+        sessionid = steam_client.session.cookies.get(
+            'sessionid', domain='store.steampowered.com')
+        data = {
+            "op": "get_sms_code",
+            "input": sms_code,
+            "sessionID": sessionid,
+            "confirmed": 1,
+            "checkfortos": 1,
+            "bisediting": 0,
+            "token": 0
+        }
+
+        # ANSWER
+        # {
+        #     "success": true,
+        #     "showResend": false,
+        #     "state": "done",
+        #     "errorText": "",
+        #     "token": "1420943491",
+        #     "vac_policy": 0,
+        #     "tos_policy": 2,
+        #     "showDone": true,
+        #     "maxLength": "5"
+        # }
+
+        response = self.request_post(steam_client.session,
+                                     url, data=data)
+        if not response.get("success", None):
+            raise AddPhoneError
+        logger.info(str(response))
+        return response
+
     def checksms_request(self, steam_client, sms_code):
         sessionid = steam_client.session.cookies.get(
                     'sessionid', domain='steamcommunity.com')
@@ -208,6 +305,37 @@ class SteamRegger:
             steam_client.session, 'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(str(response))
         return response
+
+    def confirm_sms_code_email(self, steam_client):
+        url = "https://store.steampowered.com/phone/add_ajaxop"
+        sessionid = steam_client.session.cookies.get(
+            'sessionid', domain='store.steampowered.com')
+        data = {
+            "op": "email_verification",
+            input: "",
+            "sessionID": sessionid,
+            "confirmed": 1,
+            "checkfortos": 1,
+            "bisediting": 0,
+            "token": 0
+        }
+
+        # ANSWER
+        # {
+        #     "success": true,
+        #     "showResend": false,
+        #     "state": "get_sms_code",
+        #     "errorText": "",
+        #     "token": "0",
+        #     "inputSize": "20",
+        #     "maxLength": "5"
+        # }
+
+        response = self.request_post(steam_client.session,
+                                     url, data=data)
+        if not response.get("success", None):
+            raise AddPhoneError
+        logger.info(str(response))
 
     def add_authenticator_request(self, steam_client):
         device_id = guard.generate_device_id(steam_client.oauth['steamid'])
@@ -263,16 +391,14 @@ class SteamRegger:
                     steam_client.session,
                     'https://api.steampowered.com/ITwoFactorService/FinalizeAddAuthenticator/v0001/',
                     data=data)['response']
-            except json.decoder.JSONDecodeError as err:
+            except json.decoder.JSONDecodeError:
                 logger.error("json error in the FinalizeAddAuthenticator request")
                 time.sleep(3)
                 continue
             logger.info(str(fin_resp))
-            if (fin_resp.get('want_more') or fin_resp['status'] == 88):
+            if fin_resp['status'] not in (1, 2):
                 time.sleep(5)
                 continue
-            elif fin_resp['status'] == 2:
-                fin_resp['success'] = True
             break
 
         return fin_resp['success']
@@ -564,24 +690,11 @@ class SteamRegger:
             self.client.add_log("Пароль %s слишком часто используется и поэтому не был принят" % password)
 
     def fetch_confirmation_link(self, email, email_password, creationid):
-        email_domain = email.partition("@")[2]
-        imap_host = convert_edomain_to_imap(email_domain, self.client.imap_hosts)
-        if imap_host is None:
-            raise InvalidEmail("Не удается найти imap host для данного email домена: %s" % email_domain)
-
-        server = imaplib.IMAP4_SSL(imap_host)
-        server.login(email, email_password)
-        server.select()
+        server = self.authorize_email(email, email_password)
         attempts = 0
         while attempts < 5:
             attempts += 1
-            # try:
             result, data = server.uid("search", None, 'ALL')
-            # except Exception:
-            #     logger.error("Время действия соединения с imap хостом %s истекло" % imap_host)
-            #     del self.imap_servers[imap_host]
-            #     link = self.fetch_confirmation_link(email, email_password)
-            #     return link
             uid = data[0].split()[-1]
             result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
             try:
@@ -597,6 +710,17 @@ class SteamRegger:
             time.sleep(5)
         server.close()
         raise InvalidEmail("Не удается получить письмо от Steam")
+
+    def authorize_email(self, email, email_password):
+        email_domain = email.partition("@")[2]
+        imap_host = convert_edomain_to_imap(email_domain, self.client.imap_hosts)
+
+        if imap_host is None:
+            raise InvalidEmail("Не удается найти imap host для данного email домена: %s" % email_domain)
+        server = imaplib.IMAP4_SSL(imap_host)
+        server.login(email, email_password)
+        server.select()
+        return server
 
     @staticmethod
     def select_profile_data(data, type):

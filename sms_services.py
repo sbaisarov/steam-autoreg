@@ -151,7 +151,7 @@ class SmsActivateApi:
         return id, number
 
     def set_operation_ok(self, id, time_start):
-        self._set_status(id, 6)
+        self._set_status(id, 8)
 
     def request_repeated_number_usage(self, id):
         self._set_status(id, 3)

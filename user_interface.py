@@ -1078,7 +1078,7 @@ class MainWindow:
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
 
-        self.accounts_path = self.load_file(accounts_path, self.old_accounts, r"[\d\w]+:.+\n")
+        self.accounts_path = self.load_file(accounts_path, self.old_accounts, r"[\d\w@.]+:.+\n")
 
     def put_from_text_file(self):
         for item in self.old_accounts:
@@ -1461,9 +1461,6 @@ class Binder(threading.Thread):
                 return
 
             try:
-                with self.lock:
-                    self.get_new_number()
-
                 for account in pack:
                     while True:
                         try:
@@ -1480,7 +1477,8 @@ class Binder(threading.Thread):
                         showwarning("Ошибка %s" % err.__class__.__name__, err)
                         logger.critical(traceback.format_exc())
                         self.error = True
-                self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
+                if self.number:
+                    self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
                 return
 
             self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
@@ -1497,11 +1495,9 @@ class Binder(threading.Thread):
                         return
 
     def bind_account(self, account):
-        self.client.status_bar.set('Делаю привязку Mobile Guard...')
         login, passwd, email, email_password = account.login, account.password, account.email, account.email_password
         logger.info('Аккаунт: %s:%s', login, passwd)
         insert_log = self.log_wrapper(login)
-        insert_log('Номер: ' + self.number['number'])
         insert_log('Логинюсь в аккаунт')
         try:
             steam_client = steamreg.mobile_login(login, passwd, self.proxy, email, email_password,
@@ -1528,8 +1524,13 @@ class Binder(threading.Thread):
             insert_log('К аккаунту уже привязан номер')
             return
 
+        with self.lock:
+            self.get_new_number()
+        insert_log('Номер: ' + self.number['number'])
+        steamreg.validate_phone(steam_client, self.number['number'])
+
         try:
-            sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client)
+            sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client, email, email_password)
         except SteamAuthError as err:
             error = 'Не удается привязать номер к аккаунту: %s. Ошибка: %s' % (login, err)
             logger.error(error)
@@ -1561,9 +1562,30 @@ class Binder(threading.Thread):
         self.client.accounts_binded_stat.set("Осталось аккаунтов привязать: %d" % (self.binding_total - self.binded_counter))
         self.client.accounts_binded.append(login + ":" + passwd)
 
-    def add_authenticator(self, insert_log, steam_client):
+    def add_authenticator(self, insert_log, steam_client, email, email_password):
+        attempts = 0
+        success = False
         while True:
-            insert_log('Делаю запрос Steam на добавление номера...')
+            try:
+                while attempts < 5:
+                    insert_log('Делаю запрос Steam на добавление номера...')
+                    steamreg.addphone_request_email(steam_client, self.number['number'])
+                    sms_code = steamreg.fetch_email_code(email, email_password, steam_client)
+                    steamreg.checksms_request_email(steam_client, sms_code)
+                    steamreg.confirm_sms_code_email(steam_client)
+                    success = True
+                    break
+            except AddPhoneError:
+                attempts += 1
+                time.sleep(3)
+                continue
+
+            if not success:
+                insert_log('Не доходит код на email. Пробую снова...')
+                self.get_new_number(self.number['tzid'])
+                continue
+
+            insert_log('Делаю запрос Steam на добавление аутентификатора...')
             response = steamreg.addphone_request(steam_client, self.number['number'])
             # status = response["status"]
             # if status == 73:
@@ -1583,7 +1605,7 @@ class Binder(threading.Thread):
             attempts = 0
             success = False
             try:
-                while attempts < 15:
+                while attempts < 5:
                     if self.number['is_repeated']:
                         self.sms_service.request_repeated_number_usage(self.number['tzid'])
                     attempts += 1
@@ -1603,6 +1625,9 @@ class Binder(threading.Thread):
                 insert_log('Не доходит SMS. Пробую снова...')
                 self.get_new_number(self.number['tzid'])
                 continue
+
+            self.sms_service.checksms_request(steam_client, sms_code)
+            self.sms_service.confirm_sms_code(steam_client)
 
             self.number['is_repeated'] = True
 
@@ -1689,7 +1714,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.4.0')
+    root.title('Steam Auto Authenticator v1.4.1')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
