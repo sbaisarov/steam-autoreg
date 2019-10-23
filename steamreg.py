@@ -57,10 +57,10 @@ class SteamRegger:
             self.captcha_service = AntiCaptcha(api_key, captcha_host)
 
     @staticmethod
-    def request_post(session, url, data={}, timeout=30):
+    def request_post(session, url, data={}, headers={}, timeout=30):
         while True:
             try:
-                resp = session.post(url, data=data, timeout=timeout, attempts=3).json()
+                resp = session.post(url, data=data, timeout=timeout, headers=headers, attempts=3).json()
                 return resp
             except json.decoder.JSONDecodeError as err:
                 logger.error('%s %s', err, url)
@@ -177,37 +177,6 @@ class SteamRegger:
         if not response.get("is_valid", True):
             raise AddPhoneError
 
-    def addphone_request_email(self, steam_client, phone_num):
-        sessionid = steam_client.session.cookies.get(
-            'sessionid', domain='store.steampowered.com')
-        url = "https://store.steampowered.com/phone/add_ajaxop"
-        data = {
-            "op": "get_phone_number",
-            "input": phone_num,
-            "sessionID": sessionid,
-            "confirmed": "1",
-            "checkfortos": "1",
-            "bisediting": "0",
-            "token": "0"
-        }
-        response = self.request_post(steam_client.session,
-                                     url, data=data)
-        if not response.get("success", None):
-            raise AddPhoneError
-
-        # ANSWER
-        # {
-        #     "success": true,
-        #     "showResend": false,
-        #     "state": "email_verification",
-        #     "errorText": "",
-        #     "token": "0",
-        #     "phoneNumber": "+79524762655"
-        # }
-
-        logger.info(response)
-        return response
-
     def addphone_request(self, steam_client, phone_num):
         sessionid = steam_client.session.cookies.get(
                     'sessionid', domain='steamcommunity.com')
@@ -224,6 +193,7 @@ class SteamRegger:
     def fetch_email_code(self, email, email_password, steam_client):
         server = self.authorize_email(email, email_password)
         attempts = 0
+        success = False
         while attempts < 5:
             attempts += 1
             result, data = server.uid("search", None, 'ALL')
@@ -231,14 +201,29 @@ class SteamRegger:
             result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
             try:
                 mail = data[0][1].decode('utf-8')
-                link = re.search(r'https://.+ConfirmEmailForAdd.+(?:")', mail).group(1)
+                link = re.search(r'https://.+ConfirmEmailForAdd.+?(?:")', mail).group()
+                link = link.rstrip('"')
                 steam_client.session.get(link)
+                success = True
+                break
             except AttributeError:
                 time.sleep(5)
                 continue
             time.sleep(5)
         server.close()
-        raise InvalidEmail("Не удается получить письмо от Steam")
+        return success
+
+    def email_confirmation(self, steam_client):
+        sessionid = steam_client.session.cookies.get(
+            'sessionid', domain='steamcommunity.com')
+        data = {
+            'op': 'email_confirmation',
+            'arg': None,
+            'sessionid': sessionid
+        }
+        response = self.request_post(steam_client.session,
+                                     'https://steamcommunity.com/steamguard/phoneajax', data=data)
+        return response["success"]
 
     def is_phone_attached(self, steam_client):
         sessionid = steam_client.session.cookies.get(
@@ -248,50 +233,10 @@ class SteamRegger:
             'arg': None,
             'sessionid': sessionid
         }
-        while True:
-            try:
-                response = self.request_post(steam_client.session,
-                    'https://steamcommunity.com/steamguard/phoneajax', data=data)
-                break
-            except json.decoder.JSONDecodeError as err:
-                logger.error(err)
-                time.sleep(3)
+        response = self.request_post(steam_client.session,
+                                     'https://steamcommunity.com/steamguard/phoneajax', data=data)
 
         return response['has_phone']
-
-    def checksms_request_email(self, steam_client, sms_code):
-        url = "https://store.steampowered.com/phone/add_ajaxop"
-        sessionid = steam_client.session.cookies.get(
-            'sessionid', domain='store.steampowered.com')
-        data = {
-            "op": "get_sms_code",
-            "input": sms_code,
-            "sessionID": sessionid,
-            "confirmed": 1,
-            "checkfortos": 1,
-            "bisediting": 0,
-            "token": 0
-        }
-
-        # ANSWER
-        # {
-        #     "success": true,
-        #     "showResend": false,
-        #     "state": "done",
-        #     "errorText": "",
-        #     "token": "1420943491",
-        #     "vac_policy": 0,
-        #     "tos_policy": 2,
-        #     "showDone": true,
-        #     "maxLength": "5"
-        # }
-
-        response = self.request_post(steam_client.session,
-                                     url, data=data)
-        if not response.get("success", None):
-            raise AddPhoneError
-        logger.info(str(response))
-        return response
 
     def checksms_request(self, steam_client, sms_code):
         sessionid = steam_client.session.cookies.get(
@@ -306,37 +251,6 @@ class SteamRegger:
         logger.info(str(response))
         return response
 
-    def confirm_sms_code_email(self, steam_client):
-        url = "https://store.steampowered.com/phone/add_ajaxop"
-        sessionid = steam_client.session.cookies.get(
-            'sessionid', domain='store.steampowered.com')
-        data = {
-            "op": "email_verification",
-            input: "",
-            "sessionID": sessionid,
-            "confirmed": 1,
-            "checkfortos": 1,
-            "bisediting": 0,
-            "token": 0
-        }
-
-        # ANSWER
-        # {
-        #     "success": true,
-        #     "showResend": false,
-        #     "state": "get_sms_code",
-        #     "errorText": "",
-        #     "token": "0",
-        #     "inputSize": "20",
-        #     "maxLength": "5"
-        # }
-
-        response = self.request_post(steam_client.session,
-                                     url, data=data)
-        if not response.get("success", None):
-            raise AddPhoneError
-        logger.info(str(response))
-
     def add_authenticator_request(self, steam_client):
         device_id = guard.generate_device_id(steam_client.oauth['steamid'])
         while True:
@@ -346,9 +260,9 @@ class SteamRegger:
                     data = {
                         "access_token": steam_client.oauth['oauth_token'],
                         "steamid": steam_client.oauth['steamid'],
-                        "authenticator_type": "1",
+                        "authenticator_type": 1,
                         "device_identifier": device_id,
-                        "sms_phone_id": "1"
+                        "sms_phone_id": 1
                     })['response']
             except json.decoder.JSONDecodeError:
                 time.sleep(3)
@@ -370,8 +284,9 @@ class SteamRegger:
                 ('SteamLogin', 'steamLogin'),
                 ('SteamLoginSecure', 'steamLoginSecure')):
             try:
-                mobguard_data['Session'][mafile_key] = steam_client.session.cookies[resp_key]
-            except KeyError as err:
+                mobguard_data['Session'][mafile_key] = steam_client.session.cookies.get(
+                    "sessionid", domain="steamcommunity.com")
+            except KeyError:
                 mobguard_data['Session'][mafile_key] = ''
 
         return mobguard_data
@@ -382,15 +297,15 @@ class SteamRegger:
             "steamid": steam_client.oauth['steamid'],
             "activation_code": sms_code,
             "access_token": steam_client.oauth['oauth_token'],
-            'authenticator_code': one_time_code,
-            'authenticator_time': int(time.time())
+            'authenticator_time': int(time.time()),
+            'authenticator_code': one_time_code
         }
         while True:
             try:
                 fin_resp = self.request_post(
                     steam_client.session,
                     'https://api.steampowered.com/ITwoFactorService/FinalizeAddAuthenticator/v0001/',
-                    data=data)['response']
+                    data=data, headers={'User-Agent': 'Steam App / Android / 2.3.11 / 5379038'})['response']
             except json.decoder.JSONDecodeError:
                 logger.error("json error in the FinalizeAddAuthenticator request")
                 time.sleep(3)

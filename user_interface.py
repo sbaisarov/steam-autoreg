@@ -1174,7 +1174,6 @@ class MainWindow:
                         continue
                     data.append(item.strip())
         except (EnvironmentError, TypeError):
-            # showwarning("Ошибка", "Не удается открыть указанный файл", parent=self.parent)
             return ''
 
         if data:
@@ -1379,7 +1378,7 @@ class RegistrationThread(threading.Thread):
         }
         for subid in appids:
             data['subid'] = int(subid)
-            resp = steam_client.session.post('https://store.steampowered.com/checkout/addfreelicense', data=data)
+            steam_client.session.post('https://store.steampowered.com/checkout/addfreelicense', data=data)
 
     def purchase_games(self, steam_client):
         appids = self.client.paid_games.get().replace(" ", "").split(",")
@@ -1387,7 +1386,7 @@ class RegistrationThread(threading.Thread):
         data = {"action": "add_to_cart", "sessionid": sessionid, "snr": "1_5_9__403"}
         for appid in appids:
             data["subid"] = int(appid)
-            resp = steam_client.session.post("https://store.steampowered.com/cart/", data=data)
+            steam_client.session.post("https://store.steampowered.com/cart/", data=data)
         resp = steam_client.session.get("ps://store.steampowered.com/checkout/?purchasetype=self",
                                         params={"purchasetype": "self"})
         cart_id = re.search(r"id=\"shopping_cart_gid\" value=\"(\d+)\">", resp.text).group(1)
@@ -1408,12 +1407,12 @@ class RegistrationThread(threading.Thread):
         }
         resp = steam_client.session.post("https://store.steampowered.com/checkout/inittransaction/", data=data).json()
         trans_id = resp["transid"]
-        resp = steam_client.session.post("https://store.steampowered.com/checkout/finalizetransaction/",
-                                         data={"transid": trans_id})
+        steam_client.session.post("https://store.steampowered.com/checkout/finalizetransaction/",
+                                  data={"transid": trans_id})
 
     def add_money(self, login):
         wallet = pyqiwi.Wallet(token=self.client.qiwi_api_key.get())
-        payment = wallet.send(pid="25549", recipient=login, amount=int(self.client.money_to_add.get()))
+        wallet.send(pid="25549", recipient=login, amount=int(self.client.money_to_add.get()))
 
     @staticmethod
     def save_unattached_account(login, passwd, email, email_password):
@@ -1520,15 +1519,9 @@ class Binder(threading.Thread):
             self.set_proxy()
             return
 
-        if steamreg.is_phone_attached(steam_client):
-            insert_log('К аккаунту уже привязан номер')
-            return
-
         with self.lock:
             self.get_new_number()
         insert_log('Номер: ' + self.number['number'])
-        steamreg.validate_phone(steam_client, self.number['number'])
-
         try:
             sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client, email, email_password)
         except SteamAuthError as err:
@@ -1563,83 +1556,59 @@ class Binder(threading.Thread):
         self.client.accounts_binded.append(login + ":" + passwd)
 
     def add_authenticator(self, insert_log, steam_client, email, email_password):
+        steamreg.is_phone_attached(steam_client)
+        insert_log('Делаю запрос Steam на добавление номера...')
+        success = steamreg.addphone_request(steam_client, self.number['number'])
+        if not success:
+            insert_log("Не подходит номер телефона")
+            raise SteamAuthError
+        insert_log('Отправляю запрос на получение почты')
+        success = steamreg.fetch_email_code(email, email_password, steam_client)
+        if not success:
+            insert_log("Не удается получить письмо")
+            raise SteamAuthError
+        success = steamreg.email_confirmation(steam_client)
+        if not success:
+            insert_log("Не удалсоь подтвердить почту")
+            raise SteamAuthError
+
+        insert_log('Делаю запрос Steam на добавление аутентификатора...')
+        mobguard_data = steamreg.add_authenticator_request(steam_client)
+        steamreg.is_phone_attached(steam_client)
+        insert_log('Жду SMS код...')
         attempts = 0
         success = False
-        while True:
-            try:
-                while attempts < 5:
-                    insert_log('Делаю запрос Steam на добавление номера...')
-                    steamreg.addphone_request_email(steam_client, self.number['number'])
-                    sms_code = steamreg.fetch_email_code(email, email_password, steam_client)
-                    steamreg.checksms_request_email(steam_client, sms_code)
-                    steamreg.confirm_sms_code_email(steam_client)
+        try:
+            while attempts < 5:
+                if self.number['is_repeated']:
+                    self.sms_service.request_repeated_number_usage(self.number['tzid'])
+                attempts += 1
+                sms_code, _ = self.sms_service.get_sms_code(self.number['tzid'])
+                if sms_code and sms_code not in self.used_codes:
+                    success = steamreg.checksms_request(steam_client, sms_code)
+                    if not success:
+                        insert_log("Код неверен. Пробую снова запросить sms код")
+                        mobguard_data = steamreg.add_authenticator_request(steam_client)
+                        steamreg.is_phone_attached(steam_client)
+                        continue
+                    self.used_codes.append(sms_code)
                     success = True
                     break
-            except AddPhoneError:
-                attempts += 1
-                time.sleep(3)
-                continue
+                time.sleep(4)
+        except (OnlineSimError, SmsActivateError) as err:
+            insert_log("Ошибка onlinesim: %s" % err)
+            insert_log('Новый номер: ' + self.number['number'])
+            raise SteamAuthError
 
-            if not success:
-                insert_log('Не доходит код на email. Пробую снова...')
-                self.get_new_number(self.number['tzid'])
-                continue
+        if not success:
+            insert_log('Не доходит SMS...')
+            raise SteamAuthError
 
-            insert_log('Делаю запрос Steam на добавление аутентификатора...')
-            response = steamreg.addphone_request(steam_client, self.number['number'])
-            # status = response["status"]
-            # if status == 73:
-            #     raise SteamAuthError('Аккаунт заблокирован')
+        self.number['is_repeated'] = True
 
-            if not response['success']:
-                if "we couldn't send an SMS to your phone" in response.get('error_text', ''):
-                    insert_log('Стим сообщил о том что, ему не удалось отправить SMS')
-                    insert_log('Меняю номер...')
-                    self.get_new_number(self.number['tzid'])
-                    insert_log('Новый номер: ' + self.number['number'])
-                    time.sleep(5)
-                    continue
-                raise SteamAuthError(response.get('error_text', None))
-
-            insert_log('Жду SMS код...')
-            attempts = 0
-            success = False
-            try:
-                while attempts < 5:
-                    if self.number['is_repeated']:
-                        self.sms_service.request_repeated_number_usage(self.number['tzid'])
-                    attempts += 1
-                    sms_code, _ = self.sms_service.get_sms_code(self.number['tzid'])
-                    if sms_code and sms_code not in self.used_codes:
-                        self.used_codes.append(sms_code)
-                        success = True
-                        break
-                    time.sleep(4)
-            except (OnlineSimError, SmsActivateError) as err:
-                insert_log("Ошибка onlinesim: %s" % err)
-                self.get_new_number(self.number['tzid'])
-                insert_log('Новый номер: ' + self.number['number'])
-                continue
-
-            if not success:
-                insert_log('Не доходит SMS. Пробую снова...')
-                self.get_new_number(self.number['tzid'])
-                continue
-
-            self.sms_service.checksms_request(steam_client, sms_code)
-            self.sms_service.confirm_sms_code(steam_client)
-
-            self.number['is_repeated'] = True
-
-            insert_log('Делаю запрос на привязку гуарда...')
-            mobguard_data = steamreg.add_authenticator_request(steam_client)
-            logger.info("mobguard data: %s", mobguard_data)
-            response = steamreg.checksms_request(steam_client, sms_code)
-            logger.info(response)
-            if 'The SMS code is incorrect' in response.get('error_text', ''):
-                insert_log('Неверный SMS код %s. Пробую снова...' % sms_code)
-                continue
-            return sms_code, mobguard_data
+        insert_log('Делаю запрос на проверку sms кода...')
+        logger.info("mobguard data: %s", mobguard_data)
+        return sms_code, mobguard_data
 
     def get_new_number(self, tzid=0):
         if tzid:
@@ -1714,7 +1683,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v1.4.1')
+    root.title('Steam Auto Authenticator v2.0')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
