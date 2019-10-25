@@ -604,6 +604,7 @@ class MainWindow:
         sim_host = self.onlinesim_host.get()
         reg_threads = []
         bind_threads = []
+        self.put_from_text_file()
         if self.mobile_bind.get():
             if self.sms_service_type.get() == SmsService.OnlineSim:
                 sms_service = OnlineSimApi(onlinesim_api_key, sim_host)
@@ -617,13 +618,11 @@ class MainWindow:
                 t = Binder(self, sms_service, self.accounts_per_number.get(), quota_queue)
                 t.start()
                 bind_threads.append(t)
+            Binder.total_amount = len(self.old_accounts)
 
-        if self.autoreg.get():
+        elif self.autoreg.get():
             reg_threads = self.init_threads(new_accounts_amount)
             Binder.total_amount = self.new_accounts_amount.get()
-        else:
-            self.put_from_text_file()
-            Binder.total_amount = len(self.old_accounts)
 
         for thread in reg_threads:
             thread.join()
@@ -676,10 +675,6 @@ class MainWindow:
                 showwarning("Ошибка", "Количество аккаунтов для "
                                       "регистрации должно составлять от 1 до 33",
                             parent=self.parent)
-                return False
-
-            if not self.email_boxes_data:
-                showwarning("Ошибка", "Почты не загружены")
                 return False
 
             if self.paid_games.get():
@@ -1086,7 +1081,15 @@ class MainWindow:
             try:
                 login, password, email, email_password = item.split(':')[:4]
             except ValueError:
-                login, password = item.split(':')[:2]
+                if self.mobile_bind.get():
+                    showwarning("Ошибка", "Аккаунты должны быть представлены с почтой формата login:pass:email:emailpass")
+                    raise
+                elif self.autoreg.get():
+                    if not self.email_boxes_data.get():
+                        showwarning("Ошибка", "Не были указан текстовик с почтами email:emailpass")
+                        raise
+                    email, email_password = self.email_boxes_data
+
             account = Account(login, password, email, email_password)
             self.accounts.put(account)
             if item not in self.accounts_unbinded:
@@ -1267,8 +1270,9 @@ class RegistrationThread(threading.Thread):
 
     def registrate_account(self):
         self.client.status_bar.set('Создаю аккаунты, решаю капчи...')
+        login, password, email, email_password
         try:
-            login, passwd, email, email_password = steamreg.create_account_web(self.proxy)
+            login, password, email, email_password = steamreg.create_account_web(self.proxy, email, email_password, login, password)
         except LimitReached as err:
             logging.error(err)
             if self.proxy:

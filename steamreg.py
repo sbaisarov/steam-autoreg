@@ -351,7 +351,7 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account_web(self, proxy=None):
+    def create_account_web(self, email, email_password, proxy=None, login=None, password=None):
         session = requests.Session()
         if proxy:
             proxy_uri = self.build_uri(proxy)
@@ -363,9 +363,10 @@ class SteamRegger:
         session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                 'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                                 'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
-
-        login_name = self.generate_login_name()
-        password = self.generate_password()
+        if login is None:
+            login_name = self.generate_login_name()
+        if password is None:
+            password = self.generate_password()
         while True:
             try:
                 email_item = self.client.email_boxes_data.pop(0)
