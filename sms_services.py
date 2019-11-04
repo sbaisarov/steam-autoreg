@@ -104,7 +104,7 @@ class OnlineSimApi:
             except requests.exceptions.Timeout:
                 logger.error('Не удалось получить ответ от: %s', url)
 
-        logger.info(str(resp))
+        logger.info(resp)
         return resp
 
 

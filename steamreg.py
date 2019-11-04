@@ -188,7 +188,7 @@ class SteamRegger:
         response = self.request_post(steam_client.session,
                                      'https://steamcommunity.com/steamguard/phoneajax', data=data)
         logger.info(response)
-        return response
+        return response["success"]
 
     def fetch_email_code(self, email, email_password, steam_client):
         server = self.authorize_email(email, email_password)
@@ -248,8 +248,8 @@ class SteamRegger:
         }
         response = self.request_post(
             steam_client.session, 'https://steamcommunity.com/steamguard/phoneajax', data=data)
-        logger.info(str(response))
-        return response
+        logger.info(response)
+        return response["success"]
 
     def add_authenticator_request(self, steam_client):
         device_id = guard.generate_device_id(steam_client.oauth['steamid'])
@@ -351,7 +351,7 @@ class SteamRegger:
             key = re.search('Key: (.+)</p', r.text).group(1)
             return key
 
-    def create_account_web(self, email, email_password, proxy=None, login=None, password=None):
+    def create_account_web(self, email_name, email_password, login=None, password=None, proxy=None):
         session = requests.Session()
         if proxy:
             proxy_uri = self.build_uri(proxy)
@@ -368,14 +368,7 @@ class SteamRegger:
         if password is None:
             password = self.generate_password()
         while True:
-            try:
-                email_item = self.client.email_boxes_data.pop(0)
-            except IndexError:
-                raise Exception("Почты закончились. Загрузите почты.")
-            if self.client.use_mail_repeatedly.get():
-                self.client.email_boxes_data.append(email_item)
             Email = collections.namedtuple("Email", "name password generated_name")
-            email_name, email_password = email_item.split(":")
             email_generated_name = email_name
             if self.client.generate_emails.get():
                 domain = email_name.partition("@")[2]

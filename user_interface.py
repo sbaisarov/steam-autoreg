@@ -302,7 +302,7 @@ class MainWindow:
     def load_files(self):
         self.load_manifest(self.manifest_path)
         self.load_file(self.email_boxes_path, self.email_boxes_data)
-        self.load_file(self.accounts_path, self.old_accounts)
+        # self.load_file(self.accounts_path, self.old_accounts)
         self.load_file(self.proxy_path, self.proxy_data)
         self.load_file(self.proxy_urls_path, self.proxy_urls)
         self.load_file(self.avatars_path, self.avatars)
@@ -604,8 +604,8 @@ class MainWindow:
         sim_host = self.onlinesim_host.get()
         reg_threads = []
         bind_threads = []
-        self.put_from_text_file()
         if self.mobile_bind.get():
+            self.put_from_text_file()
             if self.sms_service_type.get() == SmsService.OnlineSim:
                 sms_service = OnlineSimApi(onlinesim_api_key, sim_host)
             elif self.sms_service_type.get() == SmsService.SmsActivate:
@@ -702,11 +702,11 @@ class MainWindow:
                 showwarning("Ошибка", "Отсутсвтует квота на привязку. Оплатите за квоту чтобы привязывать аккаунты")
                 return False
             try:
-                if not 0 < self.accounts_per_number.get() <= 30:
+                if not 0 < self.accounts_per_number.get() <= 15:
                     raise ValueError
             except (TclError, ValueError):
                 showwarning("Ошибка", "Введите корректное число аккаунтов, "
-                                      "связанных с 1 номером (больше нуля но меньше 30-и).",
+                                      "связанных с 1 номером (больше нуля но меньше 15-и).",
                             parent=self.parent)
                 return False
 
@@ -723,7 +723,7 @@ class MainWindow:
                 showwarning("Ошибка", "Не указан api ключ для onlinesim.ru", parent=self.parent)
                 return False
 
-            if not self.accounts_path and not self.autoreg.get():
+            if not self.old_accounts and not self.autoreg.get():
                 showwarning("Ошибка", "Не указан путь к файлу с данными от аккаунтов. "
                                       "Если у вас нет своих аккаунтов, то поставьте галочку 'Создавать новые аккаунты'",
                             parent=self.parent)
@@ -1077,18 +1077,18 @@ class MainWindow:
 
     def put_from_text_file(self):
         for item in self.old_accounts:
-            email, email_password = None, None
             try:
                 login, password, email, email_password = item.split(':')[:4]
             except ValueError:
-                if self.mobile_bind.get():
-                    showwarning("Ошибка", "Аккаунты должны быть представлены с почтой формата login:pass:email:emailpass")
+                if not self.email_boxes_data:
+                    showwarning("Ошибка", "Аккаунты должны быть представлены с почтой формата login:pass:emailpass")
                     raise
-                elif self.autoreg.get():
-                    if not self.email_boxes_data.get():
-                        showwarning("Ошибка", "Не были указан текстовик с почтами email:emailpass")
-                        raise
-                    email, email_password = self.email_boxes_data
+                try:
+                    emailbox = self.email_boxes_data.pop()
+                except IndexError:
+                    self.add_log("Почты закончились. Будут использованы загруженные почты")
+                    return
+                email, email_password = emailbox.split(":")
 
             account = Account(login, password, email, email_password)
             self.accounts.put(account)
@@ -1270,9 +1270,16 @@ class RegistrationThread(threading.Thread):
 
     def registrate_account(self):
         self.client.status_bar.set('Создаю аккаунты, решаю капчи...')
-        login, password, email, email_password
         try:
-            login, password, email, email_password = steamreg.create_account_web(self.proxy, email, email_password, login, password)
+            emailbox = self.client.email_boxes_data.pop()
+        except IndexError:
+            raise Exception("Почты закончились")
+        email, email_password = emailbox.split(":")
+        if self.client.use_mail_repeatedly.get():
+            self.client.email_boxes_data.append(emailbox)
+        login, password = None, None
+        try:
+            login, password, email, email_password = steamreg.create_account_web(email, email_password, login, password, self.proxy)
         except LimitReached as err:
             logging.error(err)
             if self.proxy:
@@ -1284,18 +1291,18 @@ class RegistrationThread(threading.Thread):
             self.set_proxy()
             return
 
-        logger.info('Аккаунт: %s:%s', login, passwd)
-        self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, passwd))
+        logger.info('Аккаунт: %s:%s', login, password)
+        self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, password))
 
         with self.lock:
             requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
                 "quota": "registration_quota",
                 "key": self.client.software_product_key.get()
             })
-            self.save_unattached_account(login, passwd, email, email_password)
+            self.save_unattached_account(login, password, email, email_password)
             self.client.registration_quota.set(self.client.registration_quota.get() - 1)
         try:
-            steam_client = steamreg.login(login, passwd, self.proxy, self.client,
+            steam_client = steamreg.login(login, password, self.proxy, self.client,
                                           pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
@@ -1321,7 +1328,7 @@ class RegistrationThread(threading.Thread):
             country = steamreg.select_profile_data(self.client.countries, selection_type)
             steamreg.activate_account(steam_client, summary, real_name, country)
             steamreg.edit_profile(steam_client)
-            self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
+            self.client.add_log("Профиль активирован: %s:%s" % (login, password))
 
         if self.client.avatars:
             if self.client.selection_type.get() == SelectionType.RANDOM:
@@ -1351,12 +1358,12 @@ class RegistrationThread(threading.Thread):
         if self.client.paid_games.get():
             self.purchase_games(steam_client)
 
-        account = Account(login, passwd, email, email_password)
-        self.client.accounts.put(account)
         self.counter += 1
         self.client.accounts_registrated_stat.set("Аккаунтов зарегистрировано: %d" % self.counter)
         self.client.accounts_registrated_stat.set("Осталось аккаунтов зарегистрировать : %d" %
                                                   (self.client.new_accounts_amount.get() - self.counter))
+        account = Account(login, password, email, email_password)
+        self.client.accounts.put(account)
 
     def set_proxy(self):
         if self.proxy is not None:
@@ -1419,12 +1426,12 @@ class RegistrationThread(threading.Thread):
         wallet.send(pid="25549", recipient=login, amount=int(self.client.money_to_add.get()))
 
     @staticmethod
-    def save_unattached_account(login, passwd, email, email_password):
+    def save_unattached_account(login, password, email, email_password):
         with open('accounts.txt', 'a+') as f:
-            f.write('%s:%s:%s:%s\n' % (login, passwd, email, email_password))
+            f.write('%s:%s:%s:%s\n' % (login, password, email, email_password))
 
         with open(r'новые_аккаунты/%s.txt' % login, 'w') as f:
-            f.write('%s:%s\nEmail: %s:%s' % (login, passwd, email, email_password))
+            f.write('%s:%s\nEmail: %s:%s' % (login, password, email, email_password))
 
 
 class Binder(threading.Thread):
@@ -1464,6 +1471,7 @@ class Binder(threading.Thread):
                 return
 
             try:
+                self.get_new_number()
                 for account in pack:
                     while True:
                         try:
@@ -1498,12 +1506,12 @@ class Binder(threading.Thread):
                         return
 
     def bind_account(self, account):
-        login, passwd, email, email_password = account.login, account.password, account.email, account.email_password
-        logger.info('Аккаунт: %s:%s', login, passwd)
+        login, password, email, email_password = account.login, account.password, account.email, account.email_password
+        logger.info('Аккаунт: %s:%s', login, password)
         insert_log = self.log_wrapper(login)
         insert_log('Логинюсь в аккаунт')
         try:
-            steam_client = steamreg.mobile_login(login, passwd, self.proxy, email, email_password,
+            steam_client = steamreg.mobile_login(login, password, self.proxy, email, email_password,
                                                  pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
@@ -1513,7 +1521,7 @@ class Binder(threading.Thread):
             return
         except SteamAuthError as err:
             if "К аккаунту уже привязан Guard" in str(err):
-                self.client.accounts_binded.append(login + ":" + passwd)
+                self.client.accounts_binded.append(login + ":" + password)
             insert_log(err)
             return
         except CaptchaRequired as err:
@@ -1523,8 +1531,6 @@ class Binder(threading.Thread):
             self.set_proxy()
             return
 
-        with self.lock:
-            self.get_new_number()
         insert_log('Номер: ' + self.number['number'])
         try:
             sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client, email, email_password)
@@ -1534,10 +1540,9 @@ class Binder(threading.Thread):
             insert_log(error)
             self.numbers_failed_counter += 1
             self.client.numbers_failed_stat.set("Недействительных номеров: %s" % self.numbers_failed_counter)
-            self.get_new_number(self.number['tzid'])
             return
         steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
-        mobguard_data['account_password'] = passwd
+        mobguard_data['account_password'] = password
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
         requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
             "quota": "binding_quota",
@@ -1552,19 +1557,19 @@ class Binder(threading.Thread):
             country = steamreg.select_profile_data(self.client.countries, selection_type)
             steamreg.activate_account(steam_client, summary, real_name, country)
             steamreg.edit_profile(steam_client)
-            self.client.add_log("Профиль активирован: %s:%s" % (login, passwd))
+            self.client.add_log("Профиль активирован: %s:%s" % (login, password))
         insert_log('Guard успешно привязан')
         self.binded_counter += 1
         self.client.accounts_binded_stat.set("Аккаунтов привязано: %d" % self.binded_counter)
         self.client.accounts_binded_stat.set("Осталось аккаунтов привязать: %d" % (self.binding_total - self.binded_counter))
-        self.client.accounts_binded.append(login + ":" + passwd)
+        self.client.accounts_binded.append(login + ":" + password)
 
     def add_authenticator(self, insert_log, steam_client, email, email_password):
         steamreg.is_phone_attached(steam_client)
         insert_log('Делаю запрос Steam на добавление номера...')
         success = steamreg.addphone_request(steam_client, self.number['number'])
         if not success:
-            insert_log("Не подходит номер телефона")
+            insert_log("На этом аккаунте в данном номере телефона отказано")
             raise SteamAuthError
         insert_log('Отправляю запрос на получение почты')
         success = steamreg.fetch_email_code(email, email_password, steam_client)
@@ -1576,41 +1581,51 @@ class Binder(threading.Thread):
             insert_log("Не удалсоь подтвердить почту")
             raise SteamAuthError
 
-        insert_log('Делаю запрос Steam на добавление аутентификатора...')
-        mobguard_data = steamreg.add_authenticator_request(steam_client)
-        steamreg.is_phone_attached(steam_client)
-        insert_log('Жду SMS код...')
         attempts = 0
-        success = False
-        try:
-            while attempts < 5:
-                if self.number['is_repeated']:
-                    self.sms_service.request_repeated_number_usage(self.number['tzid'])
-                attempts += 1
-                sms_code, _ = self.sms_service.get_sms_code(self.number['tzid'])
-                if sms_code and sms_code not in self.used_codes:
-                    success = steamreg.checksms_request(steam_client, sms_code)
-                    if not success:
-                        insert_log("Код неверен. Пробую снова запросить sms код")
-                        mobguard_data = steamreg.add_authenticator_request(steam_client)
-                        steamreg.is_phone_attached(steam_client)
-                        continue
-                    self.used_codes.append(sms_code)
-                    success = True
-                    break
-                time.sleep(4)
-        except (OnlineSimError, SmsActivateError) as err:
-            insert_log("Ошибка onlinesim: %s" % err)
-            insert_log('Новый номер: ' + self.number['number'])
-            raise SteamAuthError
+        while attempts < 3:
+            insert_log('Делаю запрос Steam на добавление аутентификатора...')
+            mobguard_data = steamreg.add_authenticator_request(steam_client)
+            steamreg.is_phone_attached(steam_client)
+            attempts = 0
+            insert_log('Жду SMS код до 3 минут...')
+            try:
+                while attempts < 36:  # 3 minutes
+                    if self.number['is_repeated']:
+                        self.sms_service.request_repeated_number_usage(self.number['tzid'])
+                    attempts += 1
+                    sms_code, time_left = self.sms_service.get_sms_code(self.number['tzid'])
+                    if sms_code and sms_code not in self.used_codes:
+                        self.used_codes.append(sms_code)
+                        break
+                    time.sleep(5)
+            except (OnlineSimError, SmsActivateError) as err:
+                insert_log("Ошибка onlinesim: %s" % err)
+                insert_log('Новый номер: ' + self.number['number'])
+                raise SteamAuthError
 
-        if not success:
-            insert_log('Не доходит SMS...')
-            raise SteamAuthError
+            if not sms_code and time_left == 0:
+                insert_log("Закончилось время аренды номера. Меняю номер")
+                self.get_new_number(self.number['tzid'])
+                return self.add_authenticator(insert_log, steam_client, email, email_password)
+
+            if not sms_code:
+                insert_log("Не доходит смс. Запрашиваю смс повторно")
+                attempts += 1
+                continue
+
+            success = steamreg.checksms_request(steam_client, sms_code)
+            if not success:
+                insert_log("Код неверен. Пробую снова запросить sms код")
+                attempts += 1
+                continue
+            else:
+                break
 
         self.number['is_repeated'] = True
 
-        insert_log('Делаю запрос на проверку sms кода...')
+        if not success:
+            raise SteamAuthError
+
         logger.info("mobguard data: %s", mobguard_data)
         return sms_code, mobguard_data
 
@@ -1687,7 +1702,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v2.0')
+    root.title('Steam Auto Authenticator v2.1')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 
