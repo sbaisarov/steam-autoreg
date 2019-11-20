@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+import sys
 import threading
 import traceback
 from collections import namedtuple
@@ -56,22 +57,26 @@ class MainWindow:
         self.parent = parent
         self.frame = Frame(self.parent)
         self.is_running = False
-        self.software_product_key = StringVar()
-        self.registration_quota = IntVar()
+        self.software_product_key = None
+        self.product_key = StringVar()
         self.binding_quota = IntVar()
         with open('database/userdata.txt', 'r') as f:
             self.userdata = json.load(f)
         with open('accounts.txt', 'r') as f:
             self.accounts_unbinded = [row.strip() for row in f.readlines()]
         self.accounts_binded = []
-        success = self.authorize_user()
-        if not success:
+        response, key = self.authorize_user()
+        if not response['success_x001']:
             self.deploy_activation_widgets()
+        else:
+            self.binding_quota.set(response["data"]["binding_quota"])
+            self.software_product_key = key
+
         self.reg_condition = None
         self.binding_condition = None
 
         self.queue = asyncio.Queue(loop=loop)
-        self.accounts = Queue()
+        self.accounts = asyncio.Queue(loop)
         self.reg_proxies = Queue()
         self.bind_proxies = Queue()
 
@@ -186,7 +191,7 @@ class MainWindow:
 
         self.product_key_label = Label(self.frame, text="Ключ продукта:")
 
-        self.product_key_entry = Entry(self.frame, width=37, textvariable=self.software_product_key, state="readonly")
+        self.product_key_entry = Entry(self.frame, width=37, textvariable=self.product_key, state="readonly")
 
         self.accounts_per_number_label = Label(self.frame, text='Количество аккаунтов на 1 номер:')
         self.accounts_per_number_entry = Entry(self.frame, textvariable=self.accounts_per_number,
@@ -365,12 +370,8 @@ class MainWindow:
 
         Label(top, text="Квота").grid(row=0, padx=5, column=0, pady=5, sticky=W)
 
-        Label(top, text="Регистрация:").grid(row=1, padx=5, column=0, pady=5, sticky=W)
-
-        Label(top, textvariable=self.registration_quota).grid(row=1, padx=5, column=0, pady=5)
-
-        Label(top, text="Привязка:").grid(row=1, padx=5, column=1, pady=5, sticky=W)
-        Label(top, textvariable=self.binding_quota).grid(row=1, padx=5, column=1, pady=5)
+        Label(top, text="Привязка:").grid(row=1, padx=5, column=0, pady=5, sticky=W)
+        Label(top, textvariable=self.binding_quota).grid(row=1, padx=5, column=0, pady=5)
 
         lbl14 = Label(top, text="Аккаунты")
         lbl14.grid(row=3, column=0, padx=5, pady=5, sticky=W)
@@ -434,7 +435,7 @@ class MainWindow:
     def deploy_code_activation_window(self):
         def activate_code():
             resp = requests.get("https://shamanovski.pythonanywhere.com/validatecode", params={
-                "key": self.software_product_key.get(), "uniquecode": code.get()
+                "key": self.product_key.get(), "uniquecode": code.get()
             })
             response_as_dictionary = resp.json()
             message = response_as_dictionary["message"]
@@ -445,9 +446,7 @@ class MainWindow:
             if success:
                 quota = response_as_dictionary["quota"]
                 amount = response_as_dictionary["amount"]
-                if quota == "registration_quota":
-                    self.registration_quota.set(self.registration_quota.get() + amount)
-                elif quota == "binding_quota":
+                if quota == "binding_quota":
                     self.binding_quota.set(self.binding_quota.get() + amount)
 
             showwarning("Активация кода", message)
@@ -632,7 +631,6 @@ class MainWindow:
             thread.join()
 
         self.is_running = False
-        self.status_bar.set('Готов...')
 
     def check_input(self):
         if not self.manifest_path and self.import_mafile.get():
@@ -651,10 +649,10 @@ class MainWindow:
             return False
 
         if self.autoreg.get():
-            if self.registration_quota.get() <= 0:
-                showwarning("Ошибка", "Отсутсвтует квота на регистрацию. "
-                                      "Оплатите за квоту чтобы регистрировать аккаунты")
+            if not self.accounts_path and not self.email_boxes_path:
+                showwarning("Ошибка", "Не загружен текстовик с почтами", parent=self.parent)
                 return False
+
             try:
                 self.check_templates()
             except ValueError as err:
@@ -732,7 +730,7 @@ class MainWindow:
         return True
 
     def save_input(self):
-        exceptions = ('status_bar', 'license', 'stat', 'quota')
+        exceptions = ('status_bar', 'license', 'stat', 'quota', 'accounts_path')
         for field, value in self.__dict__.items():
             if list(filter(lambda exception: exception in field, exceptions)) or "status" in field:
                 continue
@@ -746,19 +744,16 @@ class MainWindow:
     def init_threads(self, threads_amount=20):
         RegistrationThread.left = self.new_accounts_amount.get()
         threads = []
-        quota_queue = Queue()
-        for _ in range(self.registration_quota.get()):
-            quota_queue.put(False)
-        quota_queue.put(True)
         if threads_amount > 20:
             threads_amount = 20
         for _ in range(threads_amount):
-            t = RegistrationThread(self, quota_queue)
+            t = RegistrationThread(self)
             t.start()
             threads.append(t)
         return threads
 
-    def authorize_user(self):
+    @staticmethod
+    def authorize_user():
         if os.path.exists('database/key.txt'):
             with open('database/key.txt', 'r') as f:
                 user_data = json.load(f)
@@ -771,12 +766,9 @@ class MainWindow:
             if store.public_key != PUBLIC_KEY:
                 return False
             resp = resp.json()
-            self.registration_quota.set(resp["data"]["registration_quota"])
-            self.binding_quota.set(resp["data"]["binding_quota"])
+            return resp, user_data['key']
         else:
-            return False
-
-        return resp['success_x001']
+            return False, None, None
 
     def generate_key(self):
         login = self.login_entry.get()
@@ -791,10 +783,11 @@ class MainWindow:
         if resp.status_code == 406:
             showwarning("Ошибка", "Логин уже используется. Пожалуйста введите другой")
             return
-        self.software_product_key.set(resp.text)
+        self.software_product_key = resp.text
+        self.product_key.set(resp.text)
 
     def check_key(self, top):
-        key = self.software_product_key.get()
+        key = self.product_key.get()
         if not key:
             showwarning('Ошибка', 'Укажите ключ продукта', parent=self.parent)
             return
@@ -812,11 +805,10 @@ class MainWindow:
             showwarning('Ошибка', 'Ключ не найден в базе данных. Введите ключ корректно либо сгенерируйте новый',
                         parent=self.parent)
             return
-
+        self.software_product_key = key
         with open('database/key.txt', 'w') as f:
             json.dump({'key': key}, f)
         data = resp["data"]
-        self.registration_quota.set(data["registration_quota"])
         self.binding_quota.set(data["binding_quota"])
         top.destroy()
 
@@ -826,7 +818,7 @@ class MainWindow:
         self.license = StringVar()
         license_key_label = Label(top, text='Введите ключ продукта:')
         license_key_label.grid(row=0, column=0, pady=5, sticky=W)
-        self.license_key_entry = Entry(top, width=37, textvariable=self.software_product_key)
+        self.license_key_entry = Entry(top, width=37, textvariable=self.product_key)
         self.license_key_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
         login_label = Label(top, text='Ваш логин (любой):')
         login_label.grid(row=1, column=0, pady=5, sticky=W)
@@ -850,6 +842,8 @@ class MainWindow:
         while True:
             proxy = await self.queue.get()
             if proxy is None:
+                self.add_log("Валидные прокси отсутствуют")
+                self.status_bar.set("Безработный")
                 return
             try:
                 ban = steamreg.check_proxy_ban(proxy)
@@ -1037,7 +1031,7 @@ class MainWindow:
     def stop_process(self):
         RegistrationThread.lock.acquire(blocking=False)
         Binder.lock.acquire(blocking=False)
-        self.status_bar.set("Остановлено")
+        self.status_bar.set("Останавливаю...")
 
     def init_proxy_producing(self):
         proxy_type = self.proxy_type.get()
@@ -1086,7 +1080,7 @@ class MainWindow:
                 try:
                     emailbox = self.email_boxes_data.pop()
                 except IndexError:
-                    self.add_log("Почты закончились. Будут использованы загруженные почты")
+                    self.add_log("Почты загружены")
                     return
                 email, email_password = emailbox.split(":")
 
@@ -1230,20 +1224,16 @@ class RegistrationThread(threading.Thread):
 
     is_alive = True
 
-    def __init__(self, window, quota_queue):
+    def __init__(self, window):
         super().__init__()
         self.daemon = True
 
         self.client = window
-        self.quota_queue = quota_queue
         self.proxy = None
 
     def run(self):
         self.set_proxy()
         while self.left > 0:
-            quota_expired = self.quota_queue.get()
-            if quota_expired:
-                return
             with self.lock:
                 self.left -= 1
             if self.counter > 0 and self.counter % self.client.accounts_per_proxy.get() == 0:
@@ -1273,6 +1263,7 @@ class RegistrationThread(threading.Thread):
         try:
             emailbox = self.client.email_boxes_data.pop()
         except IndexError:
+            self.client.status_bar.set("Безработный")
             raise Exception("Почты закончились")
         email, email_password = emailbox.split(":")
         if self.client.use_mail_repeatedly.get():
@@ -1293,14 +1284,8 @@ class RegistrationThread(threading.Thread):
 
         logger.info('Аккаунт: %s:%s', login, password)
         self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, password))
-
         with self.lock:
-            requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
-                "quota": "registration_quota",
-                "key": self.client.software_product_key.get()
-            })
             self.save_unattached_account(login, password, email, email_password)
-            self.client.registration_quota.set(self.client.registration_quota.get() - 1)
         try:
             steam_client = steamreg.login(login, password, self.proxy, self.client,
                                           pass_login_captcha=self.client.pass_login_captcha.get())
@@ -1475,7 +1460,11 @@ class Binder(threading.Thread):
                 for account in pack:
                     while True:
                         try:
-                            self.bind_account(account)
+                            success = self.bind_account(account)
+                            if not success:
+                                with open("accounts_failed", "a+") as f:
+                                    f.write("{}:{}:{}:{}".format(
+                                        account.login, account.password, account.email, account.email_password))
                             break
                         except (ProxyError, ConnectionError, Timeout):
                             self.client.add_log("Нестабильное соединение: %s"
@@ -1534,19 +1523,14 @@ class Binder(threading.Thread):
         insert_log('Номер: ' + self.number['number'])
         try:
             sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client, email, email_password)
-        except SteamAuthError as err:
-            error = 'Не удается привязать номер к аккаунту: %s. Ошибка: %s' % (login, err)
-            logger.error(error)
-            insert_log(error)
-            self.numbers_failed_counter += 1
-            self.client.numbers_failed_stat.set("Недействительных номеров: %s" % self.numbers_failed_counter)
+        except SteamAuthError:
             return
         steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
         mobguard_data['account_password'] = password
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
         requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
             "quota": "binding_quota",
-            "key": self.client.software_product_key.get()
+            "key": self.client.software_product_key
         })
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
         self.client.binding_quota.set(self.client.binding_quota.get() - 1)
@@ -1563,13 +1547,14 @@ class Binder(threading.Thread):
         self.client.accounts_binded_stat.set("Аккаунтов привязано: %d" % self.binded_counter)
         self.client.accounts_binded_stat.set("Осталось аккаунтов привязать: %d" % (self.binding_total - self.binded_counter))
         self.client.accounts_binded.append(login + ":" + password)
+        return True
 
     def add_authenticator(self, insert_log, steam_client, email, email_password):
         steamreg.is_phone_attached(steam_client)
         insert_log('Делаю запрос Steam на добавление номера...')
         success = steamreg.addphone_request(steam_client, self.number['number'])
         if not success:
-            insert_log("На этом аккаунте в данном номере телефона отказано")
+            insert_log("Steam не может привязать номер к аккаунту: %s. Попробуйте позже")
             raise SteamAuthError
         insert_log('Отправляю запрос на получение почты')
         success = steamreg.fetch_email_code(email, email_password, steam_client)
@@ -1702,7 +1687,7 @@ def launch():
     global steamreg
     steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v2.1')
+    root.title('Steam Auto Authenticator v2.2')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
 

@@ -5,7 +5,6 @@ import random
 import re
 import json
 import io
-import sys
 import logging
 import shelve
 import imaplib
@@ -23,7 +22,6 @@ from enums import CaptchaService, SelectionType
 
 logger = logging.getLogger('__main__')
 
-
 class SteamAuthError(Exception): pass
 class SteamRuCaptchaError(Exception): pass
 class RuCaptchaError(Exception): pass
@@ -35,6 +33,7 @@ class AddPhoneError(Exception): pass
 class SteamRegger:
 
     def __init__(self, client):
+        logger.info("bla")
         self.client = client
         self.failed_captchas_counter = 0
         self.sucessfull_captchas_counter = 0
