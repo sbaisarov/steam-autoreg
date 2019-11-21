@@ -33,7 +33,6 @@ class AddPhoneError(Exception): pass
 class SteamRegger:
 
     def __init__(self, client):
-        logger.info("bla")
         self.client = client
         self.failed_captchas_counter = 0
         self.sucessfull_captchas_counter = 0

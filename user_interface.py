@@ -1020,6 +1020,7 @@ class MainWindow:
             self.use_mail_repeatedly.set(1)
         self.update_clock()
         self.is_running = True
+
         t = threading.Thread(target=self.init_proxy_producing)
         t.daemon = True
         t.start()
@@ -1054,6 +1055,7 @@ class MainWindow:
             data=data, types=types), loop=loop)
         self.status_bar.set("Чекаю прокси...")
         loop.run_until_complete(self.produce_proxies())
+        # asyncio.run_coroutine_threadsafe(self.produce_proxies, loop=loop)
         loop.close()
         self.status_bar.set("Работаю...")
         self.add_log("Закончил чекинг прокси")
