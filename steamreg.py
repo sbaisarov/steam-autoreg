@@ -207,7 +207,6 @@ class SteamRegger:
             except AttributeError:
                 time.sleep(5)
                 continue
-            time.sleep(5)
         server.close()
         return success
 
@@ -251,7 +250,9 @@ class SteamRegger:
 
     def add_authenticator_request(self, steam_client):
         device_id = guard.generate_device_id(steam_client.oauth['steamid'])
-        while True:
+        attempts = 0
+        mobguard_data = None
+        while attempts < 3:
             try:
                 mobguard_data = self.request_post(steam_client.session,
                     'https://api.steampowered.com/ITwoFactorService/AddAuthenticator/v0001/',
@@ -264,12 +265,21 @@ class SteamRegger:
                     })['response']
             except json.decoder.JSONDecodeError:
                 time.sleep(3)
+                attempts += 1
                 continue
             logger.info(str(mobguard_data))
             if mobguard_data['status'] not in (1, 2):
                 time.sleep(5)
+                attempts += 1
+                continue
+            if not mobguard_data.get("shared_secret", None):
+                time.sleep(5)
+                attempts += 1
                 continue
             break
+
+        if mobguard_data is None or not mobguard_data.get("shared_secret", None):
+            raise SteamAuthError("Steam отвечает ошибкой")
 
         mobguard_data['device_id'] = device_id
         mobguard_data['Session'] = {}
@@ -298,7 +308,9 @@ class SteamRegger:
             'authenticator_time': int(time.time()),
             'authenticator_code': one_time_code
         }
-        while True:
+        attempts = 0
+        fin_resp = None
+        while attempts < 5:
             try:
                 fin_resp = self.request_post(
                     steam_client.session,
@@ -307,12 +319,17 @@ class SteamRegger:
             except json.decoder.JSONDecodeError:
                 logger.error("json error in the FinalizeAddAuthenticator request")
                 time.sleep(3)
+                attempts += 1
                 continue
             logger.info(str(fin_resp))
             if fin_resp['status'] not in (1, 2):
                 time.sleep(5)
+                attempts += 1
                 continue
             break
+
+        if fin_resp is None or fin_resp['status'] not in (1, 2):
+            raise SteamAuthError("Steam отвечает ошибкой")
 
         return fin_resp['success']
 

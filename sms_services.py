@@ -35,11 +35,7 @@ class OnlineSimApi:
                 tzid = resp['tzid']
                 break
             except KeyError:
-                if 'TRY_AGAIN_LATER' in resp['response']:
-                    print('TRY_AGAIN_LATER in response')
-                    time.sleep(3)
-                    continue
-                raise OnlineSimError(resp['response'])
+                raise OnlineSimError("Ошибка от сервиса sim %s" % resp['response'])
         return tzid
 
     def get_number(self, country='7'):
