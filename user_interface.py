@@ -59,6 +59,7 @@ class MainWindow:
             self.userdata = json.load(f)
         with open('accounts.txt', 'r') as f:
             self.accounts_unbinded = [row.strip() for row in f.readlines()]
+<<<<<<< HEAD
         self.accounts_binded = []
         self.product_key = StringVar()
         self.binding_quota = IntVar()
@@ -69,6 +70,9 @@ class MainWindow:
         else:
             self.binding_quota.set(response["data"]["binding_quota"])
 
+=======
+        self.accounts_binded = [])
+>>>>>>> 1749686 (add website files)
         self.reg_condition = None
         self.binding_condition = None
 
@@ -1252,6 +1256,7 @@ class RegistrationThread(threading.Thread):
 
     def registrate_account(self):
         self.client.status_bar.set('Создаю аккаунты, решаю капчи...')
+<<<<<<< HEAD
         with RegistrationThread.lock:
             try:
                 emailbox = self.client.email_boxes_data.pop()
@@ -1283,6 +1288,25 @@ class RegistrationThread(threading.Thread):
         self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, password))
         with self.lock:
             self.save_unattached_account(login, password, email, email_password)
+=======
+        try:
+            login, passwd, email, email_password = steamreg.create_account_web(self.proxy)
+        except LimitReached as err:
+            logging.error(err)
+            if self.proxy:
+                self.client.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
+            else:
+                self.client.add_log("Достигнут лимит регистрации аккаунтов для local ip.")
+            self.proxy_limited += 1
+            self.client.proxies_limited_stat.set("Прокси залимичено Steam: %d" % self.proxy_limited)
+            self.set_proxy()
+            return
+
+        logger.info('Аккаунт: %s:%s', login, passwd)
+        self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, passwd))
+        self.save_unattached_account(login, passwd, email, email_password)
+        self.client.registration_quota.set(self.client.registration_quota.get() - 1)
+>>>>>>> 1749686 (add website files)
         try:
             steam_client = steamreg.login(login, password, self.proxy, self.client,
                                           pass_login_captcha=self.client.pass_login_captcha.get())
@@ -1446,6 +1470,7 @@ class Binder(threading.Thread):
         self.used_codes = []
 
     def run(self):
+<<<<<<< HEAD
         try:
             self.set_proxy()
             while True:
@@ -1455,6 +1480,31 @@ class Binder(threading.Thread):
                 if self.binded_counter > 0 and self.binded_counter % self.client.accounts_per_proxy.get() == 0:
                     self.set_proxy()
                 pack = []
+=======
+        self.set_proxy()
+        self.client.status_bar.set("Привязываю мобильный аутентификатор")
+        while True:
+            if self.binded_counter > 0 and self.binded_counter % self.client.accounts_per_proxy.get() == 0:
+                self.set_proxy()
+            pack = []
+            with self.lock:
+                self.fill_pack(pack)
+            if not pack:
+                return
+
+            try:
+                for account in pack:
+                    while True:
+                        try:
+                            self.bind_account(account)
+                            break
+                        except (ProxyError, ConnectionError, Timeout):
+                            self.client.add_log("Нестабильное соединение: %s"
+                                                % (self.proxy if self.proxy else "local ip"))
+                            self.set_proxy()
+                self.client.onlinesim_balance_stat.set("Баланс SIM сервиса: %s" % self.sms_service.get_balance())
+            except Exception as err:
+>>>>>>> 1749686 (add website files)
                 with self.lock:
                     self.fill_pack(pack)
                 self.client.status_bar.set("Привязываю мобильный аутентификатор")
@@ -1544,10 +1594,13 @@ class Binder(threading.Thread):
         success = steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
         mobguard_data['account_password'] = password
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
+<<<<<<< HEAD
         requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
             "quota": "binding_quota",
             "key": self.client.userdata["key"]
         })
+=======
+>>>>>>> 1749686 (add website files)
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
 
         self.counter += 1
