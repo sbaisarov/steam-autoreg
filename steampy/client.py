@@ -1,19 +1,18 @@
 import enum
 import time
-import re
 import json
 import logging
-import collections
 from typing import List
 
 import requests
 from bs4 import BeautifulSoup
+
 from steampy import guard
 from steampy.confirmation import ConfirmationExecutor
 from steampy.login import LoginExecutor, InvalidCredentials
-from steampy.utils import text_between, merge_items_with_descriptions_from_inventory, GameOptions, \
+from steampy.utils import merge_items_with_descriptions_from_inventory, GameOptions, \
     steam_id_to_account_id, merge_items_with_descriptions_from_offers, get_description_key, \
-    merge_items_with_descriptions_from_offer, account_id_to_steam_id
+    merge_items_with_descriptions_from_offer
 
 logger = logging.getLogger('__main__')
 
@@ -78,6 +77,7 @@ class SteamClient:
         self._api_key = api_key
         self._session = requests.Session()
         self.isLoggedIn = False
+        self.was_login_executed = False
         self.mafile = None
         self.login_name = None
         self.password = None
@@ -99,7 +99,7 @@ class SteamClient:
         return shared_secret
 
     def login(self, username: str, password: str, mafile=None,
-              email=None, email_passwd=None, captcha_gid='-1', captcha_text='') -> None:
+              email=None, email_passwd=None, captcha_gid='-1', captcha_text=''):
         shared_secret = self._fetch_shared_secret(mafile)
         self._session.headers.update(self.BROWSER_HEADERS)
         login_response = LoginExecutor(username, password, shared_secret,
@@ -162,7 +162,7 @@ class SteamClient:
 
     @login_required
     def is_session_alive(self):
-        steam_login = self.username
+        steam_login = self.login_name
         main_page_response = self._session.get(self.COMMUNITY_URL)
         return steam_login in main_page_response.text
 
@@ -240,7 +240,7 @@ class SteamClient:
     def get_session_id(self) -> str:
         return self._session.cookies.get('sessionid', domain='steamcommunity.com')
 
-    def get_trade_offers_summary(self) -> dict:
+    def get_trade_offers_summary(self) -> requests.Response:
         params = {'key': self._api_key}
         return self.api_call('GET', 'IEconService', 'GetTradeOffersSummary', 'v1', params)
 
@@ -253,7 +253,7 @@ class SteamClient:
                   'active_only': 1,
                   'historical_only': 0,
                   'time_historical_cutoff': ''}
-        response = self.api_call('GET', 'IEconService', 'GetTradeOffers', 'v1', params)
+        response = self.api_call('GET', 'IEconService', 'GetTradeOffers', 'v1', params).json()
         response = self._filter_non_active_offers(response)
         if merge:
             response = merge_items_with_descriptions_from_offers(response)
@@ -273,7 +273,7 @@ class SteamClient:
         params = {'key': self._api_key,
                   'tradeofferid': trade_offer_id,
                   'language': 'english'}
-        response = self.api_call('GET', 'IEconService', 'GetTradeOffer', 'v1', params)
+        response = self.api_call('GET', 'IEconService', 'GetTradeOffer', 'v1', params).json()
         if merge:
             descriptions = {get_description_key(offer): offer for offer in response['response']['descriptions']}
             offer = response['response']['offer']
@@ -281,7 +281,7 @@ class SteamClient:
         return response
 
     @login_required
-    def accept_trade_offer(self, trade_offer_id: str, partner: str) -> dict:
+    def accept_trade_offer(self, trade_offer_id: str, partner: str):
         session_id = self.get_session_id()
         accept_url = self.COMMUNITY_URL + '/tradeoffer/' + trade_offer_id + '/accept'
         params = {'sessionid': session_id,
@@ -303,8 +303,8 @@ class SteamClient:
 
     def _fetch_trade_partner_id(self, trade_offer_id: str, my_steamid: str) -> str:
         # этот метод на данный момент неактуален
-        url = self._get_trade_offer_url(trade_offer_id)
         url = 'http://steamcommunity.com/profiles/{}/tradeoffers/'.format(my_steamid)
+        offer_response_text = None
         while True:
             try:
                 offer_response_text = self._session.get(url, timeout=60).text
@@ -313,13 +313,12 @@ class SteamClient:
                 print(err)
                 time.sleep(3)
                 continue
+        if 'You have logged in from a new device. In order to protect the items' in offer_response_text:
+            raise SevenDaysHoldException("Account has logged in a new device and can't trade for 7 days")
         s = BeautifulSoup(offer_response_text, 'html.parser')
         tradeoffer_element = s.find(id='tradeofferid_' + trade_offer_id)
         partner_id = tradeoffer_element.find(class_='playerAvatar online')['data-miniprofile']
         return partner_id
-        if 'You have logged in from a new device. In order to protect the items' in offer_response_text:
-            raise SevenDaysHoldException("Account has logged in a new device and can't trade for 7 days")
-        return text_between(offer_response_text, "var g_ulTradePartnerSteamID = '", "';")
 
     def _get_trade_offer_url(self, trade_offer_id: str) -> str:
         return self.COMMUNITY_URL + '/tradeoffer/' + trade_offer_id
@@ -340,12 +339,12 @@ class SteamClient:
     def decline_trade_offer(self, trade_offer_id: str) -> dict:
         params = {'key': self._api_key,
                   'tradeofferid': trade_offer_id}
-        return self.api_call('POST', 'IEconService', 'DeclineTradeOffer', 'v1', params)
+        return self.api_call('POST', 'IEconService', 'DeclineTradeOffer', 'v1', params).json()
 
     def cancel_trade_offer(self, trade_offer_id: str) -> dict:
         params = {'key': self._api_key,
                   'tradeofferid': trade_offer_id}
-        return self.api_call('POST', 'IEconService', 'CancelTradeOffer', 'v1', params)
+        return self.api_call('POST', 'IEconService', 'CancelTradeOffer', 'v1', params).json()
 
     @login_required
     def make_offer(self, token: str, items_from_me: List[Asset], items_from_them: List[Asset], partner_steam_id: str,
@@ -428,9 +427,8 @@ class SteamClient:
             }
             self._session.get('https://store.steampowered.com/account/forms/6050w/')
             self._session.post('https://store.steampowered.com/account/forms/submit_6050w_non_us/',
-                                    data=data, headers=headers)
+                               data=data, headers=headers)
             print('marketform sent')
-
 
         sessionid = self.get_session_id()
         headers = {
@@ -449,6 +447,7 @@ class SteamClient:
             'price': price
         }
 
+        response = None
         while True:
             try:
                 response = self._session.post('https://steamcommunity.com/market/sellitem/',
@@ -468,6 +467,7 @@ class SteamClient:
             break
 
         return response
+
 
 class SevenDaysHoldException(Exception):
     pass

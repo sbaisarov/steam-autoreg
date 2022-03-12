@@ -2,10 +2,8 @@ import enum
 
 
 class Proxy(enum.IntEnum):
-    Local = 0
-    Public = 1
-    Url = 2
-    File = 3
+    Url = 1
+    File = 2
 
 
 class SelectionType(enum.IntEnum):

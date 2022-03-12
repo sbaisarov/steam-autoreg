@@ -1,7 +1,8 @@
 import asyncio
 import datetime
+import imaplib
 import os
-import sys
+import random
 import threading
 import traceback
 from collections import namedtuple
@@ -12,12 +13,13 @@ from tkinter.messagebox import showwarning, askyesno, showinfo
 
 import cert_human
 import pyqiwi
+from requests.exceptions import Timeout, ConnectionError, ProxyError
 from proxybroker import Broker
-import webbrowser
 
 from enums import *
 from sms_services import *
-from steamreg import *
+import steamreg
+from steamreg import SteamRegger, SteamAuthError, LimitReached, AuthException, CaptchaRequired
 
 logger = logging.getLogger('__main__')
 cert_human.enable_urllib3_patch()
@@ -42,39 +44,22 @@ with open("database/interface_states.json", "r") as f:
     STATES = json.load(f)
 
 loop = asyncio.get_event_loop()
-PUBLIC_KEY = ("C464E92A6E1EA42B00E5B47BC3AD33069BAAF7DC59F9908E18B0C85839D539F6A3E11162CEBDA09412387EA895F232B6D79CE7BB"
-        "9B8CB04F5B63044F33EEA53345531A168F0E4D3BF16A9493E8D3ECCAE6EA1503E63776BFE640CABE0ADCAD52DEF695B6F90E12FA4EA22B17D129A15"
-        "A409B1C23544F5F8A155D01B4A1EB5FAA1EDE91A8AD6C7C5B908E08216F34DAB94189A83E865413DE3706E478E7BECD5382415E493E13BAC4F031ED"
-        "3CCFC2BDA69483F0D663875E2E049D4E7DEE45BEEAF9DC7504A78174025B10148FF158B9CD47C3D952D18AF929038B6A4113BC1F55F3BF408D4F6D0"
-        "B9F3E38F69319BDFE227866F38A3935532784B1A59722F91B31")
 
 
 class MainWindow:
 
     def __init__(self, parent):
+        self.frame = Frame(parent)
         self.parent = parent
-        self.frame = Frame(self.parent)
         self.is_running = False
-        with open('database/userdata.txt', 'r') as f:
-            self.userdata = json.load(f)
-        with open('accounts.txt', 'r') as f:
-            self.accounts_unbinded = [row.strip() for row in f.readlines()]
-<<<<<<< HEAD
-        self.accounts_binded = []
-        self.product_key = StringVar()
-        self.binding_quota = IntVar()
-        response = self.authorize_user()
-        if not response or not response['success_x001']:
-            showwarning("Ошибка", "Неверный ключ продукта либо он не указан в userdata")
-            self.deploy_activation_widgets()
-        else:
-            self.binding_quota.set(response["data"]["binding_quota"])
+        with open('database/userdata.txt', 'r') as file:
+            self.userdata = json.load(file)
+        with open('accounts.txt', 'r') as file:
+            self.accounts_unbinded = [row.strip() for row in file.readlines()]
 
-=======
-        self.accounts_binded = [])
->>>>>>> 1749686 (add website files)
-        self.reg_condition = None
-        self.binding_condition = None
+        self.accounts_binded = []
+
+        self.accounts_binded = []
 
         self.queue = asyncio.Queue(loop=loop)
         self.accounts = Queue()
@@ -113,9 +98,7 @@ class MainWindow:
         self.import_mafile = IntVar()
         self.mobile_bind = IntVar()
         self.fold_accounts = IntVar()
-        self.use_mail_repeatedly = IntVar()
         self.add_money_to_account = IntVar()
-        self.generate_emails = IntVar()
         self.remove_emails_from_file = IntVar()
         self.activate_profile = IntVar()
         self.selection_type = IntVar()
@@ -125,7 +108,6 @@ class MainWindow:
         self.captcha_service_type = IntVar()
         self.captcha_service_type.set(int(CaptchaService.RuCaptcha))
 
-        self.activation_code = StringVar()
         self.onlinesim_api_key = StringVar()
         self.captcha_api_key = StringVar()
         self.qiwi_api_key = StringVar()
@@ -142,7 +124,6 @@ class MainWindow:
         self.country_code = StringVar()
         self.country_code.set('Россия')
         self.proxy_type = IntVar()
-        self.use_local_ip = IntVar()
         self.pass_login_captcha = IntVar()
         self.money_to_add = IntVar()
         self.captcha_host = StringVar()
@@ -188,11 +169,8 @@ class MainWindow:
         self.passwd_template = StringVar()
 
         self.menubar = Menu(parent)
+        self.load_menu = Menu(self.menubar, tearoff=0)
         parent['menu'] = self.menubar
-
-        self.product_key_label = Label(self.frame, text="Ключ продукта:")
-
-        self.product_key_entry = Entry(self.frame, width=37, textvariable=self.product_key, state="readonly")
 
         self.accounts_per_number_label = Label(self.frame, text='Количество аккаунтов на 1 номер:')
         self.accounts_per_number_entry = Entry(self.frame, textvariable=self.accounts_per_number,
@@ -200,11 +178,6 @@ class MainWindow:
 
         self.onlinesim_settings_bttn = Button(self.frame, text='Настроить сервис онлайн номеров',
                                               command=self.deploy_onlinenum_window, bg='#CEC8C8', relief=GROOVE)
-
-        self.buy_bindings_button = Button(self.frame, text='Купить привязки',
-                                              command=lambda: webbrowser.get()\
-                                              .open("https://www.oplata.info/asp2/pay_wm.asp?id_d=2550416&lang=ru-RU"),
-                                              bg='#CEC8C8', relief=GROOVE)
 
         self.new_accounts_amount_label = Label(self.frame, text='Количество аккаунтов для регистрации:')
         self.new_accounts_amount_entry = Entry(self.frame, textvariable=self.new_accounts_amount, width=4,
@@ -219,9 +192,6 @@ class MainWindow:
         self.autoreg_checkbutton = Checkbutton(tools_frame, text='Создавать новые аккаунты',
                                                variable=self.autoreg, command=self.set_states,
                                                disabledforeground='#808080')
-        self.use_mail_repeatedly_checkbutton = Checkbutton(tools_frame, text='Использовать почты повторно',
-                                                           variable=self.use_mail_repeatedly, command=self.set_states,
-                                                           disabledforeground='#808080')
         self.add_money_to_account_checkbutton = Checkbutton(tools_frame, text='Пополнять баланс на аккаунтах',
                                                             variable=self.add_money_to_account)
 
@@ -266,7 +236,7 @@ class MainWindow:
         log_frame.grid(row=2, column=0, sticky=NSEW)
 
         self.status_bar_label = Label(log_frame, anchor=W, text='Готов...', textvariable=self.status_bar)
-        self.caption_label = Label(log_frame, text='by Shamanovsky')
+        self.caption_label = Label(log_frame, text='Shamanovski software')
 
         if self.userdata:
             self.set_attributes()
@@ -322,7 +292,6 @@ class MainWindow:
         self.load_file(self.real_names_path, self.real_names)
 
     def pack_widgets(self):
-        self.load_menu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Загрузить...", menu=self.load_menu)
         self.load_menu.add_command(label="Свои аккаунты", command=self.accounts_open)
         self.load_menu.add_command(label="Свои почты", command=self.email_boxes_open)
@@ -332,15 +301,9 @@ class MainWindow:
         self.menubar.add_cascade(label="Открыть статистику", command=self.deploy_stats_window)
         self.menubar.add_cascade(label="Задать шаблон", command=self.deploy_template_window)
         self.menubar.add_cascade(label="Дополнительно", command=self.deploy_additional_settings_window)
-        self.menubar.add_cascade(label="Активировать код", command=self.deploy_code_activation_window)
-
-        self.product_key_label.grid(row=4, column=0, padx=5, pady=5, sticky=W)
-        self.product_key_entry.grid(row=5, padx=5, column=0, pady=5, sticky=W)
 
         self.onlinesim_settings_bttn.grid(row=0, column=0, padx=3, pady=5, sticky=W)
         self.captcha_settings_bttn.grid(row=1, column=0, padx=3, pady=5, sticky=W)
-
-        self.buy_bindings_button.grid(row=0, column=1)
 
         self.new_accounts_amount_label.grid(row=2, column=0, pady=5, sticky=W)
         self.new_accounts_amount_entry.grid(row=2, column=1, pady=5, padx=5, sticky=W)
@@ -353,7 +316,6 @@ class MainWindow:
         self.mobile_bind_checkbutton.grid(row=1, column=1, pady=1, sticky=W)
         self.options_label.grid(row=2, column=0, pady=3, sticky=W)
 
-        self.use_mail_repeatedly_checkbutton.grid(row=3, column=0, pady=1, sticky=W)
         self.mafile_checkbutton.grid(row=3, column=1, pady=1)
         self.fold_accounts_checkbutton.grid(row=4, column=1, pady=1, sticky=W)
         self.add_money_to_account_checkbutton.grid(row=4, column=0, pady=1, sticky=W)
@@ -373,11 +335,6 @@ class MainWindow:
         top = Toplevel(master=self.frame)
         top.title("Статистика")
         top.iconbitmap('database/stats.ico')
-
-        Label(top, text="Квота").grid(row=0, padx=5, column=0, pady=5, sticky=W)
-
-        Label(top, text="Привязка:").grid(row=1, padx=5, column=0, pady=5, sticky=W)
-        Label(top, textvariable=self.binding_quota).grid(row=1, padx=5, column=0, pady=5)
 
         lbl14 = Label(top, text="Аккаунты")
         lbl14.grid(row=3, column=0, padx=5, pady=5, sticky=W)
@@ -438,35 +395,6 @@ class MainWindow:
         lbl12 = Label(top, textvariable=self.time_stat)
         lbl12.grid(row=17, column=0, padx=5, pady=15, sticky=W)
 
-    def deploy_code_activation_window(self):
-        def activate_code():
-            resp = requests.get("https://shamanovski.pythonanywhere.com/validatecode", params={
-                "key": self.userdata["key"], "uniquecode": code.get()
-            })
-            response_as_dictionary = resp.json()
-            message = response_as_dictionary["message"]
-            success = response_as_dictionary["success"]
-            store = cert_human.CertStore.from_response(response=resp)
-            if store.public_key != PUBLIC_KEY:
-                success = False
-            if success:
-                quota = response_as_dictionary["quota"]
-                amount = response_as_dictionary["amount"]
-                if quota == "binding_quota":
-                    self.binding_quota.set(self.binding_quota.get() + amount)
-
-            showwarning("Активация кода", message)
-            top.destroy()
-
-        top = Toplevel(master=self.frame)
-        top.title("Активация кода")
-        code = StringVar()
-        Label(top, text="Код:").grid(row=0, column=0, padx=5, pady=5, sticky=W)
-        Entry(top, textvariable=code, width=30) \
-            .grid(row=0, column=1, padx=5, pady=5, sticky=W)
-        
-        Button(top, command=activate_code, text="Подтвердить").grid(column=0, columnspan=2, row=1, padx=5, pady=5)
-
     def deploy_additional_settings_window(self):
         def add_imap_host():
             if not self.imap_host.get() or not self.email_domains.get():
@@ -475,12 +403,12 @@ class MainWindow:
             self.imap_hosts[self.imap_host.get()] = self.email_domains.get().split(",")
             showinfo("Сообщение", "IMAP сервер и почтовые домены связанные с ним успешно добавлены", parent=top)
 
-        def list_imap_hosts(top):
-            top = Toplevel(master=top)
-            top.title("IMAP сервера")
+        def list_imap_hosts(master):
+            imap_hosts_wiget = Toplevel(master=master)
+            imap_hosts_wiget.title("IMAP сервера")
             row = 0
             for imap_server, email_domains in self.imap_hosts.items():
-                Label(top, text="%s: %s" % (imap_server, ", ".join(email_domains)))\
+                Label(imap_hosts_wiget, text="%s: %s" % (imap_server, ", ".join(email_domains)))\
                     .grid(column=0, row=row, pady=5)
                 row += 1
 
@@ -506,8 +434,6 @@ class MainWindow:
             .grid(row=4, column=1, padx=5, pady=5, sticky=W)
 
         Label(top, text="Почты").grid(row=5, column=0, padx=5, pady=5, sticky=W)
-        Checkbutton(top, text="Генерировать почты", variable=self.generate_emails) \
-            .grid(row=6, column=0, padx=5, pady=5, sticky=W)
         Checkbutton(top, text="Удалять использованные почты с файла", variable=self.remove_emails_from_file) \
             .grid(row=7, column=0, padx=5, pady=5, sticky=W)
 
@@ -528,10 +454,6 @@ class MainWindow:
         Label(top, text="Аккаунты").grid(row=11, column=0, padx=5, pady=5, sticky=W)
         Checkbutton(top, text="Активировать профиль аккаунта", variable=self.activate_profile) \
             .grid(row=12, column=0, padx=5, pady=5, sticky=W)
-
-        Label(top, text="Ключ продукта").grid(row=13, column=0, padx=5, pady=5, sticky=W)
-        Button(top, text="Ввести ключ продукта", command=self.deploy_activation_widgets)\
-            .grid(column=0, row=14, padx=5, pady=5, sticky=W)
 
         Label(top, text="Комментарии").grid(row=15, column=0, padx=5, pady=5, sticky=W)
         Label(top, text="subid игры можно узнать на steamdb.info (например https://steamdb.info/app/730/subs/)"
@@ -607,6 +529,7 @@ class MainWindow:
         onlinesim_api_key = self.onlinesim_api_key.get()
         sim_host = self.onlinesim_host.get()
         threads = []
+        sms_service = None
         if self.mobile_bind.get():
             if self.old_accounts:
                 self.put_from_text_file()
@@ -614,12 +537,8 @@ class MainWindow:
                 sms_service = OnlineSimApi(onlinesim_api_key, sim_host)
             elif self.sms_service_type.get() == SmsService.SmsActivate:
                 sms_service = SmsActivateApi(onlinesim_api_key, sim_host)
-            quota_queue = Queue()
-            for _ in range(self.binding_quota.get()):
-                quota_queue.put(False)
-            quota_queue.put(True)
             for _ in range(self.amount_of_binders.get()):
-                t = Binder(self, sms_service, self.accounts_per_number.get(), quota_queue)
+                t = Binder(self, sms_service, self.accounts_per_number.get())
                 threads.append(t)
             Binder.total_amount = len(self.old_accounts)
 
@@ -699,9 +618,6 @@ class MainWindow:
                     return False
 
         if self.mobile_bind.get():
-            if self.binding_quota.get() <= 0:
-                showwarning("Ошибка", "Отсутсвтует квота на привязку. Оплатите за квоту чтобы привязывать аккаунты")
-                return False
             try:
                 if not 0 < self.accounts_per_number.get() <= 15:
                     raise ValueError
@@ -752,80 +668,6 @@ class MainWindow:
             threads.append(t)
         RegistrationThread.left = self.new_accounts_amount.get()
 
-    def authorize_user(self):
-        if os.path.exists('database/userdata.txt'):
-            if not self.userdata.get("key", None):
-                return False
-            url = 'https://shamanovski.pythonanywhere.com/authorize_user'
-            data = {
-                'key': self.userdata["key"]
-            }
-            resp = requests.post(url, data=data, timeout=10, attempts=3)
-            store = cert_human.CertStore.from_response(response=resp)
-            if store.public_key != PUBLIC_KEY:
-                quit()
-            resp = resp.json()
-            return resp
-        else:
-            return False
-
-    def generate_key(self):
-        login = self.login_entry.get()
-        if not login:
-            showwarning("Ошибка", "Укажите логин")
-            return
-        resp = requests.get("https://shamanovski.pythonanywhere.com/generate-product-key", params={"login": login})
-        store = cert_human.CertStore.from_response(response=resp)
-        if store.public_key != PUBLIC_KEY:
-            showwarning("Ошибка", "")
-            return False
-        if resp.status_code == 406:
-            showwarning("Ошибка", "Логин уже используется. Пожалуйста введите другой")
-            return
-        self.userdata["key"] = resp.text
-        self.product_key.set(resp.text)
-
-    def check_key(self, top):
-        key = self.product_key.get()
-        if not key:
-            showwarning('Ошибка', 'Укажите ключ продукта', parent=self.parent)
-            return
-        url = 'https://shamanovski.pythonanywhere.com/authorize_user'
-        data = {
-            'key': key
-        }
-        resp = requests.post(url, data=data, timeout=10, attempts=3)
-        resp = resp.json()
-        if not resp['success_x001']:
-            showwarning('Ошибка', 'Ключ не найден в базе данных. Введите ключ корректно либо сгенерируйте новый',
-                        parent=self.parent)
-            return
-        self.userdata["key"] = key
-        self.binding_quota.set(resp["data"]["binding_quota"])
-        top.destroy()
-
-    def deploy_activation_widgets(self):
-        top = Toplevel(master=self.frame)
-        top.title("Ключ продукта")
-        self.license = StringVar()
-        license_key_label = Label(top, text='Введите ключ продукта:')
-        license_key_label.grid(row=0, column=0, pady=5, sticky=W)
-        self.license_key_entry = Entry(top, width=37, textvariable=self.product_key)
-        self.license_key_entry.grid(row=0, column=1, pady=5, padx=5, sticky=W)
-        login_label = Label(top, text='Ваш логин (любой):')
-        login_label.grid(row=1, column=0, pady=5, sticky=W)
-        self.login_entry = Entry(top)
-        self.login_entry.grid(row=1, column=1, pady=5, padx=5, sticky=W)
-        check_license_bttn = Button(top, text='Сгенерировать ключ продукта',
-                                    command=self.generate_key,
-                                    relief=GROOVE)
-        check_license_bttn.grid(sticky=W, padx=5, pady=5)
-
-        check_license_bttn = Button(top, text='Подтвердить',
-                                    command=lambda: self.check_key(top),
-                                    relief=GROOVE)
-        check_license_bttn.grid(column=0, columnspan=2, padx=5, pady=5)
-
     async def produce_proxies(self):
         if not self.proxy_type.get():
             return
@@ -839,11 +681,10 @@ class MainWindow:
             try:
                 ban = steamreg.check_proxy_ban(proxy)
             except (ProxyError, ConnectionError, Timeout):
-                self.add_log("Нестабильное соединение: %s" % (proxy if proxy else "local ip"))
+                self.add_log("Нестабильное соединение: %s" % proxy)
                 continue
             if ban and pass_login_captcha:
-                self.add_log("%s: требуется решить капчу для авторизации в аккаунты"
-                             % (str(proxy).strip("<>") if proxy else "local ip"))
+                self.add_log("%s: требуется решить капчу для авторизации в аккаунты" % str(proxy).strip("<>"))
                 continue
 
             self.reg_proxies.put(proxy)
@@ -853,16 +694,14 @@ class MainWindow:
 
     def deploy_proxy_widget(self):
         def set_state():
-            type = self.proxy_type.get()
-            for widget in (load_proxy_list_bttn, load_proxy_bttn):
-                state = NORMAL if widget.value == type else DISABLED
-                widget.configure(state=state)
+            proxy_type = self.proxy_type.get()
+            for bttn in (load_proxy_list_bttn, load_proxy_bttn):
+                state = NORMAL if bttn.config("value") == proxy_type else DISABLED
+                bttn.configure(state=state)
 
         top = Toplevel(master=self.frame)
         top.title("Настройка прокси")
         top.iconbitmap('database/proxy.ico')
-        checkbttn = Checkbutton(top, text="Использовать родной IP вместе с прокси", variable=self.use_local_ip)
-        checkbttn.grid(column=0, row=0, pady=5, sticky=W)
 
         checkbttn2 = Checkbutton(top, text="\nПропускать прокси с которыми требуется\nрешать капчи для авторизации",
                                  variable=self.pass_login_captcha)
@@ -873,10 +712,6 @@ class MainWindow:
 
         lbl = Label(top, text="Тип проксирования:")
         lbl.grid(column=0, row=2, padx=5, pady=10, sticky=W)
-
-        rbttn1 = Radiobutton(top, command=set_state, text="Искать публичные прокси", variable=self.proxy_type,
-                             value=int(Proxy.Public))
-        rbttn1.grid(column=0, row=3, padx=5, pady=5, sticky=W)
 
         rbttn2 = Radiobutton(top, command=set_state, text="Загрузить ссылки на страницы с прокси:",
                              variable=self.proxy_type, value=int(Proxy.Url))
@@ -902,7 +737,7 @@ class MainWindow:
         confirm_bttn = Button(top, command=top.destroy, text="Подтвердить")
         confirm_bttn.grid(column=0, columnspan=2, row=9, padx=5, pady=5)
 
-        for rbttn in (rbttn1, rbttn2, rbttn3, rbttn4):
+        for rbttn in (rbttn2, rbttn3, rbttn4):
             if self.proxy_type.get() == rbttn.config("value"):
                 rbttn.select()
                 break
@@ -1005,8 +840,6 @@ class MainWindow:
         steamreg.set_captcha_service()
         if not self.check_input():
             return
-        if self.generate_emails.get():
-            self.use_mail_repeatedly.set(1)
         self.update_clock()
 
         t = threading.Thread(target=self.init_proxy_producing)
@@ -1026,27 +859,19 @@ class MainWindow:
 
     def init_proxy_producing(self):
         proxy_type = self.proxy_type.get()
-        if proxy_type == Proxy.Local:
-            self.reg_proxies.put(None)
-            self.bind_proxies.put(None)
-            return
-
-        if self.use_local_ip.get():
-            self.reg_proxies.put(None)
-            self.bind_proxies.put(None)
 
         providers = None
         if proxy_type == Proxy.Url:
             providers = self.proxy_urls
         self.proxy_broker = Broker(queue=self.queue, loop=loop, providers=providers)
 
-        types = [('HTTP', ('Anonymous', 'High')), 'HTTPS', 'SOCKS4', 'SOCKS5']
+        protos = [('HTTP', ('Anonymous', 'High')), 'HTTPS', 'SOCKS4', 'SOCKS5']
         data = None
         if proxy_type == Proxy.File:
-            with open(self.proxy_path) as f:
-                data = f.read()
+            with open(self.proxy_path) as file:
+                data = file.read()
         asyncio.ensure_future(self.proxy_broker.find(
-            data=data, types=types), loop=loop)
+            data=data, types=protos), loop=loop)
         self.status_bar.set("Чекаю прокси...")
         loop.run_until_complete(self.produce_proxies())
         loop.close()
@@ -1054,11 +879,11 @@ class MainWindow:
         self.add_log("Прокси загружены")
 
     def accounts_open(self):
-        dir = (os.path.dirname(self.accounts_path)
-               if self.accounts_path is not None else '.')
+        dirpath = (os.path.dirname(self.accounts_path)
+                   if self.accounts_path is not None else '.')
         accounts_path = askopenfilename(
                     title='логин:пасс аккаунтов',
-                    initialdir=dir,
+                    initialdir=dirpath,
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
 
@@ -1111,38 +936,38 @@ class MainWindow:
 
     def load_manifest(self, manifest_path):
         try:
-            with open(manifest_path, 'r') as f:
-                self.manifest_data = json.load(f)
+            with open(manifest_path, 'r') as file:
+                self.manifest_data = json.load(file)
             self.manifest_path = manifest_path
         except (EnvironmentError, TypeError, json.JSONDecodeError):
             return
 
         self.status_bar.set("Файл загружен: %s" % os.path.basename(manifest_path))
 
-    def proxy_open(self, window):
+    def proxy_open(self, frame):
         dir_ = (os.path.dirname(self.proxy_path)
                 if self.proxy_path is not None else '.')
         proxy_path = askopenfilename(
             title='Proxy',
             initialdir=dir_,
             filetypes=[('Text file (.txt)', '*.txt')],
-            defaultextension='.txt', parent=window)
+            defaultextension='.txt', parent=frame)
 
         self.proxy_path = self.load_file(proxy_path, self.proxy_data)
-        window.destroy()
+        frame.destroy()
 
-    def proxy_list_open(self, window):
+    def proxy_list_open(self, frame):
         dir_ = (os.path.dirname(self.proxy_path)
                 if self.proxy_path is not None else '.')
         proxy_urls_path = askopenfilename(
             title='Proxy URLS',
             initialdir=dir_,
             filetypes=[('Text file (.txt)', '*.txt')],
-            defaultextension='.txt', parent=window)
+            defaultextension='.txt', parent=frame)
 
         self.proxy_urls_path = self.load_file(proxy_urls_path, self.proxy_urls)
 
-    def file_open(self, window, path, title, collection, regexr=None):
+    def file_open(self, frame, path, title, collection, regexr=None):
         path_attr = getattr(self, path)
         dir_ = (os.path.dirname(path_attr)
                 if path is not None else '.')
@@ -1150,7 +975,7 @@ class MainWindow:
             title=title,
             initialdir=dir_,
             filetypes=[('Text file (.txt)', '*.txt')],
-            defaultextension='.txt', parent=window)
+            defaultextension='.txt', parent=frame)
 
         path_string = self.load_file(input_path, collection, regexr)
         setattr(self, path, path_string)
@@ -1159,8 +984,8 @@ class MainWindow:
         if not path:
             return ''
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                for row, item in enumerate(f.readlines()):
+            with open(path, 'r', encoding='utf-8') as file:
+                for row, item in enumerate(file.readlines()):
                     if regexr and not re.match(regexr, item):
                         self.add_log("Недопустимое значение: {0} в строке {1}".format(item.strip(), row))
                         if not item.endswith("\n"):
@@ -1181,23 +1006,23 @@ class MainWindow:
 
     def app_quit(self, *ignore):
         self.save_input()
-        with open('database/userdata.txt', 'w') as f:
-            json.dump(self.userdata, f)
+        with open('database/userdata.txt', 'w') as file:
+            json.dump(self.userdata, file)
 
         steamreg.counters_db.sync()
         steamreg.counters_db.close()
 
         if self.remove_emails_from_file.get():
-            with open(self.email_boxes_path, "w") as f:
+            with open(self.email_boxes_path, "w") as file:
                 for email in self.email_boxes_data:
-                    f.write(email + "\n")
+                    file.write(email + "\n")
 
-        with open("accounts.txt", "w") as f:
+        with open("accounts.txt", "w") as file:
             for account in self.accounts_unbinded:
                 login_passwd = account.split(":")[:2]
                 login_passwd = ":".join(login_passwd)
                 if login_passwd not in self.accounts_binded:
-                    f.write(account + "\n")
+                    file.write(account + "\n")
 
         self.parent.destroy()
 
@@ -1221,32 +1046,32 @@ class RegistrationThread(threading.Thread):
 
     is_alive = True
 
-    def __init__(self, window):
+    def __init__(self, frame):
         super().__init__()
         self.daemon = True
-        self.client = window
+        self.client = frame
         self.proxy = None
 
     def run(self):
-            try:
+        self.set_proxy()
+        while RegistrationThread.left > 0:
+            with self.lock:
+                RegistrationThread.left -= 1
+            if self.counter > 0 and self.counter % self.client.accounts_per_proxy.get() == 0:
                 self.set_proxy()
-                while RegistrationThread.left > 0:
-                    with self.lock:
-                        RegistrationThread.left -= 1
-                    if self.counter > 0 and self.counter % self.client.accounts_per_proxy.get() == 0:
-                        self.set_proxy()
-                    self.registrate_account()
+            try:
+                self.registrate_account()
             except (ProxyError, ConnectionError, Timeout):
-                self.client.add_log("Нестабильное соединение: %s" % (self.proxy if self.proxy else "local ip"))
+                self.client.add_log("Нестабильное соединение: %s" % self.proxy)
                 self.set_proxy()
                 with self.lock:
                     RegistrationThread.left += 1
                 self.proxy_invalid += 1
                 self.client.proxies_bad_stat.set("Недействительных прокси: %d" % self.proxy_limited)
-            except Exception as err:
+            except Exception as error:
                 with self.lock:
                     if not RegistrationThread.error:
-                        showwarning("Ошибка %s" % err.__class__.__name__, err)
+                        showwarning("Ошибка %s" % error.__class__.__name__, error)
                         logger.critical(traceback.format_exc())
                         RegistrationThread.error = True
                 return
@@ -1256,64 +1081,41 @@ class RegistrationThread(threading.Thread):
 
     def registrate_account(self):
         self.client.status_bar.set('Создаю аккаунты, решаю капчи...')
-<<<<<<< HEAD
+        email, email_password = None, None
         with RegistrationThread.lock:
             try:
                 emailbox = self.client.email_boxes_data.pop()
             except IndexError:
-                self.client.status_bar.set("Безработный")
                 raise Exception("Почты закончились")
             email, email_password = emailbox.split(":")
             if self.client.use_mail_repeatedly.get():
                 self.client.email_boxes_data.append(emailbox)
-        login, password = None, None
         attempts = 0
+        login, password = None, None
         while attempts < 3:
             try:
-                login, password, email, email_password = steamreg.create_account_web(email, email_password, login, password, self.proxy)
+                login, password, email, email_password = steamreg.create_account_web(
+                    email, email_password, proxy=self.proxy)
                 break
             except LimitReached as err:
                 logging.error(err)
-                if self.proxy:
-                    self.client.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
-                    self.proxy_limited += 1
-                    self.client.proxies_limited_stat.set("Прокси залимичено Steam: %d" % self.proxy_limited)
-                    self.set_proxy()
-                    attempts += 1
-                else:
-                    self.client.add_log("Достигнут лимит регистрации аккаунтов для local ip.")
-                    return
+                self.client.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
+                self.proxy_limited += 1
+                self.client.proxies_limited_stat.set("Прокси залимичено Steam: %d" % self.proxy_limited)
+                self.set_proxy()
+                attempts += 1
 
         logger.info('Аккаунт: %s:%s', login, password)
         self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, password))
         with self.lock:
             self.save_unattached_account(login, password, email, email_password)
-=======
-        try:
-            login, passwd, email, email_password = steamreg.create_account_web(self.proxy)
-        except LimitReached as err:
-            logging.error(err)
-            if self.proxy:
-                self.client.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
-            else:
-                self.client.add_log("Достигнут лимит регистрации аккаунтов для local ip.")
-            self.proxy_limited += 1
-            self.client.proxies_limited_stat.set("Прокси залимичено Steam: %d" % self.proxy_limited)
-            self.set_proxy()
-            return
 
-        logger.info('Аккаунт: %s:%s', login, passwd)
-        self.client.add_log('Аккаунт зарегистрирован (%s, %s, %s)' % (self.proxy, login, passwd))
-        self.save_unattached_account(login, passwd, email, email_password)
-        self.client.registration_quota.set(self.client.registration_quota.get() - 1)
->>>>>>> 1749686 (add website files)
         try:
             steam_client = steamreg.login(login, password, self.proxy, self.client,
                                           pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
-            self.client.add_log("%s: не удается авторизоваться с этого айпи"
-                                % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
+            self.client.add_log("%s: не удается авторизоваться с этого айпи" % str(self.proxy).strip("<>"))
             self.set_proxy()
             return
         except SteamAuthError as err:
@@ -1322,8 +1124,7 @@ class RegistrationThread(threading.Thread):
             return
         except CaptchaRequired as err:
             logger.error(err)
-            self.client.add_log("%s: требуется решить капчу для авторизации в аккаунты"
-                                % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
+            self.client.add_log("%s: требуется решить капчу для авторизации в аккаунты" % str(self.proxy).strip("<>"))
             self.set_proxy()
             return
 
@@ -1336,6 +1137,7 @@ class RegistrationThread(threading.Thread):
             steamreg.edit_profile(steam_client)
             self.client.add_log("Профиль активирован: %s:%s" % (login, password))
 
+        avatar = None
         if self.client.avatars:
             if self.client.selection_type.get() == SelectionType.RANDOM:
                 avatar = random.choice(self.client.avatars)
@@ -1376,19 +1178,14 @@ class RegistrationThread(threading.Thread):
         if self.proxy is not None:
             self.proxy.close()
         timeout = 120
-        if self.client.proxy_type.get() == Proxy.Local:
-            timeout = 0
         try:
             proxy = self.client.reg_proxies.get(timeout=timeout)
-            if self.client.proxy_type.get() != Proxy.Local and not self.client.use_local_ip.get() and proxy is None:
+            if proxy is None:
                 raise Empty
         except Empty:
             raise Exception("Валидные прокси закончились")
 
-        if proxy is None:
-            self.client.add_log("Regger: Использую local ip")
-        else:
-            self.client.add_log("Regger: " + str(proxy).strip("<>"))
+        self.client.add_log("Regger: " + str(proxy).strip("<>"))
         self.proxy = proxy
 
     def add_free_games(self, steam_client):
@@ -1437,14 +1234,14 @@ class RegistrationThread(threading.Thread):
 
     @staticmethod
     def save_unattached_account(login, password, email, email_password):
-        with open('accounts(login,pass,email).txt', 'a+') as f:
-            f.write('%s:%s:%s:%s\n' % (login, password, email, email_password))
+        with open('accounts(login,pass,email).txt', 'a+') as file:
+            file.write('%s:%s:%s:%s\n' % (login, password, email, email_password))
 
-        with open(r'accounts(login,pass).txt' % login, 'w') as f:
-            f.write('%s:%s\n' % (login, password))
+        with open(r'accounts(login,pass).txt' % login, 'w') as file:
+            file.write('%s:%s\n' % (login, password))
 
-        with open(r'новые_аккаунты/%s.txt' % login, 'w') as f:
-            f.write('%s:%s\nEmail: %s:%s' % (login, password, email, email_password))
+        with open(r'новые_аккаунты/%s.txt' % login, 'w') as file:
+            file.write('%s:%s\nEmail: %s:%s' % (login, password, email, email_password))
 
 
 class Binder(threading.Thread):
@@ -1458,10 +1255,9 @@ class Binder(threading.Thread):
 
     error = False
 
-    def __init__(self, window, sms_service, amount, quota_queue):
+    def __init__(self, frame, sms_service, amount):
         super().__init__()
-        self.client = window
-        self.quota_queue = quota_queue
+        self.client = frame
         self.amount = amount
         self.counter = self.amount
         self.sms_service = sms_service
@@ -1470,41 +1266,36 @@ class Binder(threading.Thread):
         self.used_codes = []
 
     def run(self):
-<<<<<<< HEAD
         try:
-            self.set_proxy()
-            while True:
-                quota_expired = self.quota_queue.get()
-                if quota_expired:
-                    return
-                if self.binded_counter > 0 and self.binded_counter % self.client.accounts_per_proxy.get() == 0:
-                    self.set_proxy()
-                pack = []
-=======
-        self.set_proxy()
+            self.run_as_handled()
+        except Exception as err:
+            with self.lock:
+                if not self.error:
+                    showwarning(f"Ошибка {err.__class__.__name__}", err)
+                    logger.critical(traceback.format_exc())
+                    self.error = True
+            if self.number:  # if the operation has successfully finished
+                self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
+            return
+
+    def run_as_handled(self):
+        self.client.set_proxy()
         self.client.status_bar.set("Привязываю мобильный аутентификатор")
+        pack = []
         while True:
-            if self.binded_counter > 0 and self.binded_counter % self.client.accounts_per_proxy.get() == 0:
-                self.set_proxy()
-            pack = []
             with self.lock:
                 self.fill_pack(pack)
             if not pack:
                 return
-
-            try:
-                for account in pack:
-                    while True:
-                        try:
-                            self.bind_account(account)
-                            break
-                        except (ProxyError, ConnectionError, Timeout):
-                            self.client.add_log("Нестабильное соединение: %s"
-                                                % (self.proxy if self.proxy else "local ip"))
-                            self.set_proxy()
+            for account in pack:
+                while True:
+                    try:
+                        self.client.bind_account(account)
+                        break
+                    except (ProxyError, ConnectionError, Timeout):
+                        self.client.add_log("Нестабильное соединение: %s" % self.proxy)
+                        self.client.set_proxy()
                 self.client.onlinesim_balance_stat.set("Баланс SIM сервиса: %s" % self.sms_service.get_balance())
-            except Exception as err:
->>>>>>> 1749686 (add website files)
                 with self.lock:
                     self.fill_pack(pack)
                 self.client.status_bar.set("Привязываю мобильный аутентификатор")
@@ -1514,29 +1305,18 @@ class Binder(threading.Thread):
                     except IndexError:
                         break
                     try:
-                        self.bind_account(account)
+                        self.client.bind_account(account)
                         break
                     except (SteamAuthError, CaptchaRequired, AuthException) as e:
-                        with open("accounts_failed.txt", "a+") as f:
+                        with open("accounts_failed.txt", "a+"):
                             f.write("{}:{}:{}:{}\n".format(
                                 account.login, account.password, account.email, account.email_password))
                         self.client.add_log("Ошибка: %s" % e)
                         continue
                     except (ProxyError, ConnectionError, Timeout):
-                        self.client.add_log("Нестабильное соединение: %s"
-                                            % (self.proxy if self.proxy else "local ip"))
-                        self.set_proxy()
+                        self.client.add_log("Нестабильное соединение: %s" % self.proxy)
+                        self.client.set_proxy()
                     self.client.onlinesim_balance_stat.set("Баланс SIM сервиса: %s" % self.sms_service.get_balance())
-
-        except Exception as err:
-            with self.lock:
-                if not self.error:
-                    showwarning("Ошибка %s" % err.__class__.__name__, err)
-                    logger.critical(traceback.format_exc())
-                    self.error = True
-            if self.number:
-                self.sms_service.set_operation_ok(self.number['tzid'], self.number['time'])
-            return
 
     def fill_pack(self, pack):
         amount = self.amount
@@ -1554,7 +1334,7 @@ class Binder(threading.Thread):
                     amount -= 1
                 except Empty:
                     if not RegistrationThread.is_alive:
-                        return
+                        raise Empty("accounts for mobile binding have been depleted")
 
     def bind_account(self, account):
         login, password, email, email_password = account.login, account.password, account.email, account.email_password
@@ -1566,8 +1346,7 @@ class Binder(threading.Thread):
                                                  pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
-            self.client.add_log("%s: не удается авторизоваться с этого айпи"
-                                % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
+            self.client.add_log("%s: не удается авторизоваться с этого айпи" % str(self.proxy).strip("<>"))
             self.set_proxy()
             return
         except SteamAuthError as err:
@@ -1577,8 +1356,7 @@ class Binder(threading.Thread):
             return
         except CaptchaRequired as err:
             logger.error(err)
-            insert_log("%s: требуется решить капчу для авторизации в аккаунты"
-                       % (str(self.proxy).strip("<>") if self.proxy else "local ip"))
+            insert_log("%s: требуется решить капчу для авторизации в аккаунты" % str(self.proxy).strip("<>"))
             self.set_proxy()
             return
         except imaplib.IMAP4.error as err:
@@ -1591,16 +1369,8 @@ class Binder(threading.Thread):
 
         insert_log('Номер: ' + self.number['number'])
         sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client, email, email_password)
-        success = steamreg.finalize_authenticator_request(steam_client, mobguard_data, sms_code)
         mobguard_data['account_password'] = password
         offer_link = steamreg.fetch_tradeoffer_link(steam_client)
-<<<<<<< HEAD
-        requests.post("https://shamanovski.pythonanywhere.com/updatequota", data={
-            "quota": "binding_quota",
-            "key": self.client.userdata["key"]
-        })
-=======
->>>>>>> 1749686 (add website files)
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
 
         self.counter += 1
@@ -1623,42 +1393,42 @@ class Binder(threading.Thread):
     def add_authenticator(self, insert_log, steam_client, email, email_password):
         steamreg.is_phone_attached(steam_client)
         insert_log('Делаю 3 попытки установить Guard...')
-        attempts = 0
-        while attempts < 3:
-            while True:
-                success = steamreg.addphone_request(steam_client, self.number['number'])
-                if not success:
-                    insert_log("прокси забанен Steam-ом")
-                    self.set_proxy()
-                    # QUIT THE LOOP
-                # raise SteamAuthError("Steam не может привязать номер к аккаунту: %s. Попробуйте позже" % steam_client.login_name)
-            insert_log('Отправляю запрос на получение почты')
-            success = steamreg.fetch_email_code(email, email_password, steam_client)
+        while True:
+            success = steamreg.addphone_request(steam_client, self.number['number'])
             if not success:
-                raise SteamAuthError("Не удается получить письмо")
-            success = steamreg.email_confirmation(steam_client)
-            if not success:
-                raise SteamAuthError("Не удалсоь подтвердить почту")
+                insert_log("прокси забанен Steam-ом")
+                self.set_proxy()
+                continue
+            break
+        insert_log('Отправляю запрос на получение почты')
+        success = steamreg.fetch_email_code(email, email_password, steam_client)
+        if not success:
+            raise SteamAuthError("Не удается получить письмо")
+        success = steamreg.email_confirmation(steam_client)
+        if not success:
+            raise SteamAuthError("Не удалсоь подтвердить почту")
 
-            insert_log('Делаю запрос Steam на добавление аутентификатора...')
-            mobguard_data = steamreg.add_authenticator_request(steam_client)
-            steamreg.is_phone_attached(steam_client)
-            attempts = 0
-            insert_log('Жду SMS код до 2 минут...')
+        insert_log('Делаю запрос Steam на добавление аутентификатора...')
+        mobguard_data = steamreg.add_authenticator_request(steam_client)
+        steamreg.is_phone_attached(steam_client)
+        insert_log('Жду SMS код до 2 минут...')
+        attempts = 0
+        sms_code = None
+        while attempts < 24:
             try:
-                while attempts < 24:
-                    if self.number['is_repeated']:
-                        self.sms_service.request_repeated_number_usage(self.number['tzid'])
-                    attempts += 1
-                    sms_code, time_left = self.sms_service.get_sms_code(self.number['tzid'])
-                    if sms_code and sms_code not in self.used_codes:
-                        self.used_codes.append(sms_code)
-                        break
-                    time.sleep(5)
+                if self.number['is_repeated']:
+                    self.sms_service.request_repeated_number_usage(self.number['tzid'])
+                attempts += 1
+                sms_code, time_left = self.sms_service.get_sms_code(self.number['tzid'])
+                if sms_code and sms_code not in self.used_codes:
+                    self.used_codes.append(sms_code)
+                    break
+                time.sleep(5)
             except (OnlineSimError, SmsActivateError) as err:
                 insert_log("Ошибка onlinesim: %s" % err)
                 insert_log('Новый номер: ' + self.number['number'])
                 raise SteamAuthError
+
             if not sms_code and time_left == 0:
                 insert_log("Закончилось время аренды номера. Меняю номер")
                 self.get_new_number(self.number['tzid'])
@@ -1678,12 +1448,6 @@ class Binder(threading.Thread):
                 break
 
         self.number['is_repeated'] = True
-        
-        while True:
-            if not success:
-                insert_log("прокси забанен Steam-ом")
-                self.set_proxy()
-            # raise SteamAuthError("Не удается привязать Guard к аккаунту %s" % steam_client.login_name)
 
         logger.info("mobguard data: %s", mobguard_data)
         return sms_code, mobguard_data
@@ -1713,13 +1477,13 @@ class Binder(threading.Thread):
         mafile_path = os.path.join(accounts_dir, account.login + '.maFile')
         binding_date = datetime.date.today()
         revocation_code = mobguard_data['revocation_code']
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write('{account.login}:{account.password}\nДата привязки Guard: {binding_date}\nНомер: {number}\n'
-                    'SteamID: {steamid}\nRCODE: {revocation_code}\nТрейд ссылка: {offer_link}\n'
-                    'Email: {account.email}\nEmail password: {account.email_password}'.format(**locals()))
+        with open(txt_path, 'w', encoding='utf-8') as file:
+            file.write('{account.login}:{account.password}\nДата привязки Guard: {binding_date}\nНомер: {number}\n'
+                       'SteamID: {steamid}\nRCODE: {revocation_code}\nТрейд ссылка: {offer_link}\n'
+                       'Email: {account.email}\nEmail password: {account.email_password}'.format(**locals()))
 
-        with open('accounts_guard.txt', 'a+') as f:
-            f.write('%s:%s:%s:%s\n' % (account.login, account.password, account.email, account.email_password))
+        with open('accounts_guard.txt', 'a+') as file:
+            file.write('%s:%s:%s:%s\n' % (account.login, account.password, account.email, account.email_password))
 
         if self.client.import_mafile.get():
             sda_path = os.path.join(os.path.dirname(self.client.manifest_path), account.login + '.maFile')
@@ -1734,26 +1498,21 @@ class Binder(threading.Thread):
                 json.dump(self.client.manifest_data, f1)
                 json.dump(mobguard_data, f2, separators=(',', ':'))
 
-        with open(mafile_path, 'w') as f:
-            json.dump(mobguard_data, f, separators=(',', ':'))
+        with open(mafile_path, 'w') as file:
+            json.dump(mobguard_data, file, separators=(',', ':'))
 
     def set_proxy(self):
         if self.proxy is not None:
             self.proxy.close()
         timeout = 120
-        if self.client.proxy_type.get() == Proxy.Local:
-            timeout = 0
         try:
             proxy = self.client.bind_proxies.get(timeout=timeout)
-            if self.client.proxy_type.get() != Proxy.Local and not self.client.use_local_ip.get() and proxy is None:
+            if proxy is None:
                 raise Empty
         except Empty:
             raise Exception("Валидные прокси закончились")
 
-        if proxy is None:
-            self.client.add_log("Binder: Использую local ip")
-        else:
-            self.client.add_log("Binder: " + str(proxy).strip("<>"))
+        self.client.add_log("Binder: " + str(proxy).strip("<>"))
         self.proxy = proxy
 
     def log_wrapper(self, login):
@@ -1762,18 +1521,15 @@ class Binder(threading.Thread):
         return insert_log
 
 
-def launch():
+if __name__ == '__main__':
     root = Tk()
     window = MainWindow(root)
-    global steamreg
-    steamreg = SteamRegger(window)
     root.iconbitmap('database/app.ico')
-    root.title('Steam Auto Authenticator v2.5')
+    root.title('Steam Auto Authenticator v.3')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
+    steamreg = SteamRegger(window)
 
-
-if __name__ == '__main__':
     logging.getLogger("requests").setLevel(logging.ERROR)
     logger = logging.getLogger(__name__)
     formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
@@ -1781,5 +1537,3 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
-
-launch()

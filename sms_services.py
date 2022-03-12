@@ -4,6 +4,7 @@ import time
 import json
 import logging
 
+
 class OnlineSimError(Exception): pass
 class SmsActivateError(Exception): pass
 
@@ -52,9 +53,9 @@ class OnlineSimApi:
                     continue
                 raise OnlineSimError(resp['response'])
 
-    def get_sms_code(self, tzid):
+    def get_sms_code(self, tztoken):
         url = self.base_url % 'api/getState.php'
-        data = {'message_to_code': 1, 'tzid': tzid, 'apikey': self.api_key}
+        data = {'message_to_code': 1, 'tzid': tztoken, 'apikey': self.api_key}
         resp = self._send_request(url, data)
         try:
             sms_code = resp[0].get('msg', None)
@@ -65,17 +66,17 @@ class OnlineSimApi:
             raise OnlineSimError(resp[0])
         return sms_code, time_left
 
-    def set_operation_ok(self, tzid, time_start):
+    def set_operation_ok(self, tztoken, time_start):
         now = int(time.time())
         if now - time_start < 125:
             time.sleep(125 - (now - time_start))
         url = self.base_url % 'api/setOperationOk.php'
-        data = {'tzid': tzid, 'apikey': self.api_key}
+        data = {'tzid': tztoken, 'apikey': self.api_key}
         self._send_request(url, data)
 
-    def request_repeated_number_usage(self, tzid):
+    def request_repeated_number_usage(self, tztoken):
         url = self.base_url % 'api/setOperationRevise.php'
-        data = {'tzid': tzid, 'apikey': self.api_key}
+        data = {'tzid': tztoken, 'apikey': self.api_key}
         self._send_request(url, data)
 
     def get_balance(self):
@@ -89,16 +90,21 @@ class OnlineSimApi:
 
     @staticmethod
     def _send_request(url, data):
+        resp = None
         while True:
             try:
                 resp = requests.post(url, data=data, timeout=5)
-                resp = resp.json()
-                break
-            except json.decoder.JSONDecodeError:
-                logger.error('Сработала CloudFlare защита: %s. Код ошибки: %s', url, resp.status_code)
-                time.sleep(3)
             except requests.exceptions.Timeout:
                 logger.error('Не удалось получить ответ от: %s', url)
+                time.sleep(3)
+                continue
+            if resp is not None:
+                try:
+                    resp = resp.json()
+                    break
+                except json.decoder.JSONDecodeError:
+                    logger.error('Сработала CloudFlare защита: %s. Код ошибки: %s', url, resp.status_code)
+                    time.sleep(3)
 
         logger.info(resp)
         return resp
@@ -142,30 +148,30 @@ class SmsActivateApi:
         if "ACCESS_NUMBER" not in resp.text:
             raise SmsActivateError(resp.text)
 
-        id, number = resp.text.split(':')[1:]
+        token, number = resp.text.split(':')[1:]
         number = '+' + number
-        return id, number
+        return token, number
 
-    def set_operation_ok(self, id, time_start):
-        self._set_status(id, 8)
+    def set_operation_ok(self, token):
+        self._set_status(token, 8)
 
-    def request_repeated_number_usage(self, id):
-        self._set_status(id, 3)
+    def request_repeated_number_usage(self, token):
+        self._set_status(token, 3)
 
-    def _set_status(self, id, status):
+    def _set_status(self, token, status):
         """
-        :param id: activation id
+        :param token: activation id
         :param status: 1 - number is ready, 3 - request number again, 6 - complete activation
         :return: None
         """
-        set_status_params = {'api_key': self.api_key, 'action': 'setStatus', 'id': id, 'status': status}
+        set_status_params = {'api_key': self.api_key, 'action': 'setStatus', 'id': token, 'status': status}
         resp = requests.get(self.base_url, params=set_status_params, timeout=10)
         logger.info('Ответ от sms-activate на запрос установить статус: ' + resp.text)
 
-    def get_sms_code(self, id):
+    def get_sms_code(self, token):
         resp = requests.get(self.base_url, params={'api_key': self.api_key,
                                                    'action': 'getStatus',
-                                                   'id': id}, timeout=10)
+                                                   'id': token}, timeout=10)
         logger.info('Ответ от sms-activate на запрос получить статус: ' + resp.text)
         try:
             status, delimeter, smscode_msg = resp.text.partition(':')
@@ -174,4 +180,3 @@ class SmsActivateApi:
             sms_code = ''
 
         return sms_code, None
-

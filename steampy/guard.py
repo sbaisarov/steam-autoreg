@@ -15,7 +15,7 @@ logger = logging.getLogger('__main__')
 
 def load_steam_guard(steam_guard: str) -> dict:
     with open(steam_guard, 'r') as f:
-        return json.loads(f.read())
+        return json.loads(file.read())
 
 
 def generate_one_time_code(shared_secret: str, timestamp: int) -> str:

@@ -3,10 +3,10 @@ import struct
 import time
 import re
 import datetime
-import json
 import logging
 from typing import List
 from imaplib import IMAP4, IMAP4_SSL
+
 
 class GameOptions(enum.Enum):
     DOTA2 = ('570', '2')
@@ -33,12 +33,12 @@ class GameOptions(enum.Enum):
 logger = logging.getLogger("__main__")
 
 
-def fetch_emaiL_code(email, email_passwd, login_name, subject):
+def fetch_email_code(email, email_passwd, login_name, subject):
     email_domain = email.partition('@')[2]
     if email_domain == 'yandex.ru' or email_domain == 'bubblemail.xyz':
         imap_server = 'imap.yandex.ru'
     else:
-        imap_server = 'imap.mail.ru' # no full search support for this imap server
+        imap_server = 'imap.mail.ru'  # no full search support for this imap server
 
     date = datetime.datetime.today().strftime("%d-%b-%Y")
     regexpr = r'login to account (?:.+):\s+(.+)\s+'

@@ -25,7 +25,7 @@ class LoginExecutor:
         self.shared_secret = shared_secret
         self.session = session
 
-    def login(self) -> requests.Session:
+    def login(self) -> dict:
         login_response = self._send_login_request()
         self._check_for_captcha(login_response)
         self._perform_redirects(login_response)
@@ -42,6 +42,7 @@ class LoginExecutor:
         second_attempt = False
         attempts = 0
         response = None
+        timestamp = 0
         while attempts < 3:
             attempts += 1
             rsa_params = self._fetch_rsa_params()
@@ -105,12 +106,12 @@ class LoginExecutor:
         return {'rsa_key': rsa.key.PublicKey(rsa_mod, rsa_exp),
                 'rsa_timestamp': rsa_timestamp}
 
-    def _encrypt_password(self, rsa_params: dict) -> str:
+    def _encrypt_password(self, rsa_params: dict) -> bytes:
         return base64.b64encode(
             rsa.pkcs1.encrypt(self.password.encode('utf-8'), rsa_params['rsa_key']))
 
-    def _prepare_login_request_data(self, encrypted_password: str, rsa_timestamp: str,
-                                    one_time_code: str, emailauth: str)-> dict:
+    def _prepare_login_request_data(self, encrypted_password: bytes, rsa_timestamp: str,
+                                    one_time_code: str, emailauth: str) -> dict:
         return {
             'password': encrypted_password,
             'username': self.username,
@@ -153,16 +154,16 @@ class LoginExecutor:
         if not login_response.json()['success']:
             raise InvalidCredentials(login_response.json()['message'])
 
-    def _perform_redirects(self, response_dict: dict) -> requests.Response:
+    def _perform_redirects(self, response_dict: dict):
         try:
             parameters = response_dict['transfer_parameters']
         except KeyError:
-            return
+            return None
         for url in response_dict['transfer_urls']:
             self.session.post(url, parameters, attempts=3)
 
     def _fetch_home_page(self, session: requests.Session) -> requests.Response:
-        return session.post(self.COMMUNITY_URL + '/my/home/', attempts=3)
+        return session.post(self.COMMUNITY_URL + '/my/home/')
 
 
 class InvalidCredentials(Exception):

@@ -1,0 +1,25 @@
+{
+   "autoreg":{
+     "priority": 0,
+      "entries":{
+         "new_accounts_amount_entry":"normal",
+         "rucaptcha_apikey_entry":"normal"
+      },
+      "checkbuttons":{
+         "use_mail_repeatedly_checkbutton": "normal",
+         "add_money_to_account_checkbutton": "normal"
+      }
+   },
+   "mobile_bind":{
+     "priority": 0,
+      "entries":{
+         "onlinesim_apikey_entry":"normal",
+         "accounts_per_number_entry":"normal",
+         "amount_of_binders_field": "normal"
+      },
+      "checkbuttons":{
+         "mafile_checkbutton":"normal",
+         "fold_accounts_checkbutton":"normal"
+      }
+   }
+}

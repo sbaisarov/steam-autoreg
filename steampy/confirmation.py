@@ -1,6 +1,5 @@
 import enum
 import time
-import logging
 from typing import List
 
 import requests
@@ -44,6 +43,7 @@ class ConfirmationExecutor:
     def send_markettrans_allow_request(self) -> dict:
         confirmations = self._get_confirmations()
         resp = self._multi_confimm_trans(confirmations)
+        return resp.json()
 
     def _confirm_trans(self, confirmation):
         tag = Tag.ALLOW

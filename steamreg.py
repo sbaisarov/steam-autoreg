@@ -22,11 +22,19 @@ from enums import CaptchaService, SelectionType
 
 logger = logging.getLogger('__main__')
 
+
 class SteamAuthError(Exception): pass
-class SteamRuCaptchaError(Exception): pass
+
+
 class RuCaptchaError(Exception): pass
+
+
 class LimitReached(Exception): pass
+
+
 class InvalidEmail(Exception): pass
+
+
 class AddPhoneError(Exception): pass
 
 
@@ -55,7 +63,11 @@ class SteamRegger:
             self.captcha_service = AntiCaptcha(api_key, captcha_host)
 
     @staticmethod
-    def request_post(session, url, data={}, headers={}, timeout=30):
+    def request_post(session, url, data=None, headers=None, timeout=30):
+        if headers is None:
+            headers = {}
+        if data is None:
+            data = {}
         while True:
             try:
                 resp = session.post(url, data=data, timeout=timeout, headers=headers, attempts=3).json()
@@ -68,7 +80,11 @@ class SteamRegger:
                     raise err
 
     @staticmethod
-    def request_get(session, url, headers={}, params={}, timeout=30, is_json=False):
+    def request_get(session, url, headers=None, params=None, timeout=30, is_json=False):
+        if params is None:
+            params = {}
+        if headers is None:
+            headers = {}
         while True:
             try:
                 resp = session.get(url, headers=headers, params=params, timeout=timeout, attempts=3)
@@ -87,8 +103,8 @@ class SteamRegger:
         if proxy:
             proxy_uri = self.build_uri(proxy)
             proxy = {
-              'http': proxy_uri,
-              'https': proxy_uri,
+                'http': proxy_uri,
+                'https': proxy_uri,
             }
             steam_client.session.proxies.update(proxy)
         captcha_gid, captcha_text = '-1', ''
@@ -127,8 +143,8 @@ class SteamRegger:
         if proxy:
             proxy_uri = self.build_uri(proxy)
             proxy = {
-              'http': proxy_uri,
-              'https': proxy_uri,
+                'http': proxy_uri,
+                'https': proxy_uri,
             }
             steam_client.session.proxies.update(proxy)
         captcha_gid, captcha_text = '-1', ''
@@ -158,7 +174,7 @@ class SteamRegger:
 
         if not steam_client.oauth:
             error = 'Не удалось залогиниться в аккаунт: {}:{}'.format(
-                        login_name, password)
+                login_name, password)
             raise SteamAuthError(error)
 
         steam_client.session.get("https://store.steampowered.com")  # get store cookies
@@ -173,11 +189,11 @@ class SteamRegger:
         response = self.request_post(steam_client.session,
                                      url, data=data)
         if not response.get("is_valid", True):
-            raise AddPhoneError
+            raise AddPhoneError("Недопустимый номер")
 
     def addphone_request(self, steam_client, phone_num):
         sessionid = steam_client.session.cookies.get(
-                    'sessionid', domain='steamcommunity.com')
+            'sessionid', domain='steamcommunity.com')
         data = {
             'op': 'add_phone_number',
             'arg': phone_num,
@@ -194,12 +210,12 @@ class SteamRegger:
         success = False
         while attempts < 5:
             attempts += 1
-            result, data = server.uid("search", None, 'ALL')
+            result, data = server.uid('search', '', 'ALL')
             uid = data[0].split()[-1]
             result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
             try:
                 mail = data[0][1].decode('utf-8')
-                link = re.search(r'https://.+ConfirmEmailForAdd.+?(?:")', mail).group()
+                link = re.search(r'https://.+ConfirmEmailForAdd.+?"', mail).group()
                 link = link.rstrip('"')
                 steam_client.session.get(link)
                 success = True
@@ -224,7 +240,7 @@ class SteamRegger:
 
     def is_phone_attached(self, steam_client):
         sessionid = steam_client.session.cookies.get(
-                    'sessionid', domain='steamcommunity.com')
+            'sessionid', domain='steamcommunity.com')
         data = {
             'op': 'has_phone',
             'arg': None,
@@ -237,7 +253,7 @@ class SteamRegger:
 
     def checksms_request(self, steam_client, sms_code):
         sessionid = steam_client.session.cookies.get(
-                    'sessionid', domain='steamcommunity.com')
+            'sessionid', domain='steamcommunity.com')
         data = {
             'op': 'check_sms_code',
             'arg': sms_code,
@@ -255,14 +271,14 @@ class SteamRegger:
         while attempts < 3:
             try:
                 mobguard_data = self.request_post(steam_client.session,
-                    'https://api.steampowered.com/ITwoFactorService/AddAuthenticator/v0001/',
-                    data = {
-                        "access_token": steam_client.oauth['oauth_token'],
-                        "steamid": steam_client.oauth['steamid'],
-                        "authenticator_type": 1,
-                        "device_identifier": device_id,
-                        "sms_phone_id": 1
-                    })['response']
+                                                  'https://api.steampowered.com/ITwoFactorService/AddAuthenticator/v0001/',
+                                                  data={
+                                                      "access_token": steam_client.oauth['oauth_token'],
+                                                      "steamid": steam_client.oauth['steamid'],
+                                                      "authenticator_type": 1,
+                                                      "device_identifier": device_id,
+                                                      "sms_phone_id": 1
+                                                  })['response']
             except json.decoder.JSONDecodeError:
                 time.sleep(3)
                 attempts += 1
@@ -333,7 +349,8 @@ class SteamRegger:
 
         return fin_resp['success']
 
-    def make_account_unlimited(self, mobguard_data, wallet_code, get_api_key=False):
+    @staticmethod
+    def make_account_unlimited(mobguard_data, wallet_code, get_api_key=False):
         steam_client = SteamClient()
         steam_client.login(mobguard_data['account_name'], mobguard_data['account_password'], mobguard_data)
         data = {
@@ -354,7 +371,7 @@ class SteamRegger:
 
         if get_api_key:
             sessionid = steam_client.session.cookies.get(
-                        'sessionid', domain='steamcommunity.com')
+                'sessionid', domain='steamcommunity.com')
             data = {
                 'domain': 'domain.com',
                 'agreeToTerms': 'agreed',
@@ -371,17 +388,21 @@ class SteamRegger:
         if proxy:
             proxy_uri = self.build_uri(proxy)
             proxy = {
-              'http': proxy_uri,
-              'https': proxy_uri,
+                'http': proxy_uri,
+                'https': proxy_uri,
             }
             session.proxies.update(proxy)
         session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                                'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
+                                               'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                                 'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
+
+        login_name = "login"
         if login is None:
             login_name = self.generate_login_name()
         if password is None:
             password = self.generate_password()
+        if email_name is None or email_password is None:
+            raise InvalidEmail("Нет данных для входа в почту")
         while True:
             Email = collections.namedtuple("Email", "name password generated_name")
             email_generated_name = email_name
@@ -399,9 +420,11 @@ class SteamRegger:
                 captcha_id = self.captcha_service.generate_recaptcha(sitekey)
                 captcha_text = self.resolve_captcha(captcha_id)
                 if not captcha_text:
+                    self.client.add_log("")
                     continue
                 break
             logger.info("Confirming email... %s", login_name)
+            creationid = 0
             try:
                 creationid = self.confirm_email(session, gid, captcha_text, email)
                 break
@@ -481,13 +504,16 @@ class SteamRegger:
         if not proxy:
             return None
         protocols = {"SOCKS5", "SOCKS4", "HTTPS", "HTTP"}
+        protocol = None
         for protocol in protocols:
             if protocol in proxy.types:
                 break
-        uri = "%s://" % protocol.lower()
+        if protocol is None:
+            raise ProxyError("protocol couldn't be found")
+        uri = " % s://" % protocol.lower()
         if proxy.login and proxy.password:
-            uri += "%s:%s@" % (proxy.login, proxy.password)
-        uri += "%s:%s" % (proxy.host, proxy.port)
+            uri += " % s:%s@" % (proxy.login, proxy.password)
+        uri += " % s:%s" % (proxy.host, proxy.port)
         return uri
 
     def check_proxy_ban(self, proxy):
@@ -495,18 +521,15 @@ class SteamRegger:
             self.login("asd", "bkb", proxy=proxy, pass_login_captcha=True)
         except CaptchaRequired:
             return True
-        except AuthException:
-            raise ConnectionError
-        except Exception:
-            pass
+
         return False
 
     @staticmethod
     def generate_credential(start, end, uppercase=True):
         char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
         random.shuffle(char_sets)
-        func = lambda x: ''.join((random.choice(x) for _ in range(random.randint(start, end))))
-        credential = ''.join(map(func, char_sets))
+        credential = ''.join(map(lambda x: ''.join((random.choice(x)
+                                                    for _ in range(random.randint(start, end)))), char_sets))
         if not uppercase:
             credential = credential.lower()
         return credential
@@ -532,7 +555,8 @@ class SteamRegger:
                 if self.counters_db["nickname_counters"].get(nickname_template, None) is None:
                     self.counters_db["nickname_counters"][nickname_template] = 0
                 self.counters_db["nickname_counters"][nickname_template] += 1
-                nickname = self.client.nickname_template.get().format(num=self.counters_db["nickname_counters"][nickname_template])
+                nickname = self.client.nickname_template.get().format(
+                    num=self.counters_db["nickname_counters"][nickname_template])
         url = 'https://steamcommunity.com/profiles/{}/edit'.format(steam_client.steamid)
         data = {
             'sessionID': steam_client.get_session_id(),
@@ -554,7 +578,8 @@ class SteamRegger:
             "doSub": 1,
             "json": 1
         }
-        steam_client.session.post("https://steamcommunity.com/actions/FileUploader", files={"avatar": avatar}, data=data)
+        steam_client.session.post("https://steamcommunity.com/actions/FileUploader", files={"avatar": avatar},
+                                  data=data)
 
     @staticmethod
     def edit_profile(steam_client):
@@ -577,7 +602,7 @@ class SteamRegger:
                 logging.error("Edit profile error %s: %s", steam_client.login_name, err)
                 time.sleep(30)
             except (json.decoder.JSONDecodeError, KeyError) as err:
-                logging.error("%s: %s", err, resp.text)
+                logging.error(" % s: %s", err, resp.text)
                 time.sleep(5)
 
             if success:
@@ -618,7 +643,7 @@ class SteamRegger:
         attempts = 0
         while attempts < 5:
             attempts += 1
-            result, data = server.uid("search", None, 'ALL')
+            result, data = server.uid('search', '', 'ALL')
             uid = data[0].split()[-1]
             result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
             try:
@@ -647,12 +672,12 @@ class SteamRegger:
         return server
 
     @staticmethod
-    def select_profile_data(data, type):
+    def select_profile_data(data, selection_type):
         result = ""
         if data:
-            if type == SelectionType.RANDOM:
+            if selection_type == SelectionType.RANDOM:
                 result = random.choice(data)
-            elif type == SelectionType.CONSISTENT:
+            elif selection_type == SelectionType.CONSISTENT:
                 result = data.pop(0)
                 data.append(result)
 
@@ -702,19 +727,25 @@ class RuCaptcha:
     def resolve_captcha(self, captcha_id):
         while True:
             time.sleep(5)
-            r = requests.post(self.host % 'res.php' + '?key={}&action=get2&id={}'
+            r = requests.post(self.host % 'res.php' + '?key={}&action=reportget&id={}'
                               .format(self.api_key, captcha_id), timeout=30)
             logger.info(r.text)
             if 'CAPCHA_NOT_READY' in r.text:
                 continue
             elif 'ERROR_CAPTCHA_UNSOLVABLE' in r.text:
+                self.report_bad(captcha_id)
                 return None
             break
 
+        self.report_good(captcha_id)
         return r.text.split('|')
 
     def report_bad(self, captcha_id):
         requests.post(self.host % 'res.php' + '?key={}&action=reportbad&id={}'
+                      .format(self.api_key, captcha_id), timeout=30)
+
+    def report_good(self, captcha_id):
+        requests.post(self.host % 'res.php' + '?key={}&action=reportgood&id={}'
                       .format(self.api_key, captcha_id), timeout=30)
 
 
