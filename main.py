@@ -696,7 +696,7 @@ class MainWindow:
         def set_state():
             proxy_type = self.proxy_type.get()
             for bttn in (load_proxy_list_bttn, load_proxy_bttn):
-                state = NORMAL if bttn.config("value") == proxy_type else DISABLED
+                state = NORMAL if bttn.value == proxy_type else DISABLED
                 bttn.configure(state=state)
 
         top = Toplevel(master=self.frame)
@@ -921,7 +921,8 @@ class MainWindow:
                     filetypes=[('Text file', '*.txt')],
                     defaultextension='.txt', parent=self.parent)
 
-        self.email_boxes_path = self.load_file(email_boxes_path, self.email_boxes_data, r"[\d\w\-\.]+@[\d\w]+\.\w+:.+\n")
+        self.email_boxes_path = self.load_file(
+            email_boxes_path, self.email_boxes_data, r"[\d\w\-\.]+@[\d\w]+\.\w+:.+$")
 
     def manifest_open(self):
         dir_ = (os.path.dirname(self.manifest_path)
@@ -1008,9 +1009,6 @@ class MainWindow:
         self.save_input()
         with open('database/userdata.txt', 'w') as file:
             json.dump(self.userdata, file)
-
-        steamreg.counters_db.sync()
-        steamreg.counters_db.close()
 
         if self.remove_emails_from_file.get():
             with open(self.email_boxes_path, "w") as file:
@@ -1537,3 +1535,4 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+    
