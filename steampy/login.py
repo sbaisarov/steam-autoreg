@@ -13,6 +13,7 @@ class LoginExecutor:
     COMMUNITY_URL = "https://steamcommunity.com"
     STORE_URL = 'https://store.steampowered.com'
     API_URL = 'https://api.steampowered.com'
+    IMAP_HOSTS = dict()
 
     def __init__(self, username, password, shared_secret, session,
                  email, email_passwd, captcha_gid='-1', captcha_text=''):

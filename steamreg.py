@@ -14,7 +14,7 @@ from requests.exceptions import Timeout, ConnectionError, ProxyError
 from python_anticaptcha import AnticaptchaClient, ImageToTextTask, NoCaptchaTaskProxylessTask
 
 from steampy.client import SteamClient
-from steampy.login import CaptchaRequired, AuthException
+from steampy.login import CaptchaRequired
 from steampy.utils import convert_edomain_to_imap
 from steampy import guard
 
@@ -29,7 +29,7 @@ class SteamAuthError(Exception): pass
 class RuCaptchaError(Exception): pass
 
 
-class LimitReached(Exception): pass
+class LimitReachedError(Exception): pass
 
 
 class InvalidEmail(Exception): pass
@@ -473,7 +473,7 @@ class SteamRegger:
         if resp['success'] == 17:
             raise InvalidEmail("Данный почтовый адрес не поддерживается Steam")
         if resp['success'] != 1:
-            raise LimitReached
+            raise LimitReachedError
 
         creationid = resp['sessionid']
         time.sleep(10)  # wait some time until email has been received
@@ -528,7 +528,7 @@ class SteamRegger:
     def generate_credential(start, end, uppercase=True):
         char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
         random.shuffle(char_sets)
-        credential = ''.join(map(lambda x: ''.join((random.choice(x)
+        credential = "".join(map(lambda x: ''.join((random.choice(x)
                                                     for _ in range(random.randint(start, end)))), char_sets))
         if not uppercase:
             credential = credential.lower()
@@ -540,9 +540,9 @@ class SteamRegger:
         elif domain == "COMMUNITY":
             url = 'https://steamcommunity.com/login/rendercaptcha/?gid={}'
         else:
-            raise Exception("WRONG domain")
+            raise Exception("Wrong domain")
         captcha_img = self.request_get(session, url.format(gid), timeout=30).content
-        captcha_id = self.captcha_service.generate_captcha_img(captcha_img)
+        captcha_id = self.captcha_service._generate_captcha_img(captcha_img)
         return captcha_id
 
     def activate_account(self, steam_client, summary, real_name, country):
@@ -686,8 +686,8 @@ class SteamRegger:
 
 class RuCaptcha:
 
-    def __init__(self, api_key, host):
-        if not host:
+    def __init__(self, api_key, host=None):
+        if host is None:
             host = "rucaptcha.com"
         else:
             host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
@@ -718,8 +718,10 @@ class RuCaptcha:
 
     def generate_recaptcha(self, sitekey):
         resp = requests.post(self.host % 'in.php',
-                             data={'key': self.api_key, 'method': 'userrecaptcha', 'googlekey': sitekey,
-                                   'pageurl': 'https://store.steampowered.com/join/refreshcaptcha/?count=1'},
+                             params={'key': self.api_key, 'method': 'userrecaptcha', 'googlekey': sitekey,
+                                     'version': 'enterprise', 'action': 'verify', 'min_score': 0.3,
+                                     'pageurl': 'https://store.steampowered.com/join/refreshcaptcha/?count=1'
+                                     },
                              timeout=30)
         captcha_id = resp.text.partition('|')[2]
         return captcha_id
@@ -727,8 +729,11 @@ class RuCaptcha:
     def resolve_captcha(self, captcha_id):
         while True:
             time.sleep(5)
-            r = requests.post(self.host % 'res.php' + '?key={}&action=reportget&id={}'
-                              .format(self.api_key, captcha_id), timeout=30)
+            r = requests.post(self.host % 'res.php',
+                              params={
+                                  'action': 'get', 'key': self.api_key, 'id': captcha_id
+                                  },
+                              timeout=30)
             logger.info(r.text)
             if 'CAPCHA_NOT_READY' in r.text:
                 continue
@@ -761,7 +766,7 @@ class AntiCaptcha(AnticaptchaClient):
     def get_balance(self):
         return self.getBalance()
 
-    def generate_captcha_img(self, captcha_img):
+    def _generate_captcha_img(self, captcha_img):
         task = ImageToTextTask(io.BytesIO(captcha_img))
         job = self.createTask(task)
         return job
@@ -784,7 +789,3 @@ class AntiCaptcha(AnticaptchaClient):
 
     def report_bad(self, job):
         self.reportIncorrectImage(job.task_id)
-
-
-if __name__ == '__main__':
-    reg = SteamRegger(None)
