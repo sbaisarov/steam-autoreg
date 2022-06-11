@@ -16,6 +16,7 @@ from steampy.utils import merge_items_with_descriptions_from_inventory, GameOpti
 
 logger = logging.getLogger('__main__')
 
+
 class Currency(enum.IntEnum):
     USD = 1
     GBP = 2
@@ -57,12 +58,14 @@ def login_required(func):
         if not self.isLoggedIn:
             raise LoginRequired('Use login method first')
         else:
-            return func(self, *args, **kwargs)
+            return func(*args, **kwargs)
 
     return func_wrapper
 
+
 class LoginRequired(Exception):
     pass
+
 
 class SteamClient:
     API_URL = "https://api.steampowered.com"
@@ -73,7 +76,7 @@ class SteamClient:
             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'}
     MARKET_CURRENCIES = {'kr': 'Norwegian Krone', 'pуб.': 'Russian Ruble'}
 
-    def __init__(self, api_key=None, proxy=None):
+    def __init__(self, api_key=None):
         self._api_key = api_key
         self._session = requests.Session()
         self.isLoggedIn = False
@@ -156,7 +159,7 @@ class SteamClient:
         url = LoginExecutor.STORE_URL + '/logout/'
         params = {'sessionid': self.get_session_id()}
         self._session.post(url, params)
-        if self.is_session_alive():
+        if self.is_session_alive(self):
             raise Exception("Logout unsuccessful")
         self.was_login_executed = False
 
@@ -290,7 +293,6 @@ class SteamClient:
                   'partner': partner,
                   'captcha': ''}
         headers = {'Referer': self._get_trade_offer_url(trade_offer_id)}
-        response = None
         try:
             response = self._session.post(accept_url, data=params, headers=headers, timeout=60).json()
             if response.get('needs_mobile_confirmation', False):
@@ -401,9 +403,9 @@ class SteamClient:
 
     def create_market_listing(self, assetid, price, appid, context_id=2):
         def send_marketform():
-            sessionid = self._session.cookies.get('sessionid', domain='store.steampowered.com')
+            store_sessionid = self._session.cookies.get('sessionid', domain='store.steampowered.com')
             data = {
-                'sessionid': sessionid,
+                'sessionid': store_sessionid,
                 'full_name': self.login_name,
                 'permanent_address1': 'City',
                 'permanent_state': '',
@@ -420,14 +422,14 @@ class SteamClient:
                 'mailing_country': 'RU',
                 'full_name_signed': self.login_name
             }
-            headers = {
+            store_headers = {
                 'Host': 'store.steampowered.com',
                 'Origin': 'https://store.steampowered.com',
                 'Referer': 'https://store.steampowered.com/account/forms/6050w/'
             }
             self._session.get('https://store.steampowered.com/account/forms/6050w/')
             self._session.post('https://store.steampowered.com/account/forms/submit_6050w_non_us/',
-                               data=data, headers=headers)
+                               data=data, headers=store_headers)
             print('marketform sent')
 
         sessionid = self.get_session_id()

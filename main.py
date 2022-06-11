@@ -18,10 +18,19 @@ from proxybroker import Broker
 
 from enums import *
 from sms_services import *
-import steamreg
-from steamreg import SteamRegger, SteamAuthError, LimitReached, AuthException, CaptchaRequired
+from steamreg import SteamRegger, SteamAuthError, LimitReachedError
+from steampy.login import AuthException, CaptchaRequired, LoginExecutor
 
 logger = logging.getLogger('__main__')
+logger.setLevel(logging.DEBUG)
+
+logging.getLogger("requests").setLevel(logging.ERROR)
+formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+logger.setLevel(logging.INFO)
 cert_human.enable_urllib3_patch()
 
 for dir_name in ('новые_аккаунты', 'загруженные_аккаунты'):
@@ -400,7 +409,7 @@ class MainWindow:
             if not self.imap_host.get() or not self.email_domains.get():
                 showinfo("Сообщение", "Задайте IMAP сервер и почтовые домены соответствующие ему", parent=top)
                 return
-            self.imap_hosts[self.imap_host.get()] = self.email_domains.get().split(",")
+            LoginExecutor.IMAP_HOSTS[self.imap_host.get()] = self.email_domains.get().split(",")
             showinfo("Сообщение", "IMAP сервер и почтовые домены связанные с ним успешно добавлены", parent=top)
 
         def list_imap_hosts(master):
@@ -679,7 +688,7 @@ class MainWindow:
                 return
             self.status_bar.set("Работаю...")
             try:
-                ban = steamreg.check_proxy_ban(proxy)
+                ban = steamregger.check_proxy_ban(proxy)
             except (ProxyError, ConnectionError, Timeout):
                 self.add_log("Нестабильное соединение: %s" % proxy)
                 continue
@@ -696,7 +705,7 @@ class MainWindow:
         def set_state():
             proxy_type = self.proxy_type.get()
             for bttn in (load_proxy_list_bttn, load_proxy_bttn):
-                state = NORMAL if bttn.value == proxy_type else DISABLED
+                state = NORMAL if bttn.config("value") == proxy_type else DISABLED
                 bttn.configure(state=state)
 
         top = Toplevel(master=self.frame)
@@ -827,7 +836,7 @@ class MainWindow:
         Button(top, command=top.destroy, text="Подтвердить").grid(column=0, columnspan=3, row=4, padx=5, pady=5)
 
     def check_captcha_key(self):
-        balance = steamreg.captcha_service.get_balance()
+        balance = steamregger.captcha_service.get_balance()
         self.captcha_balance_stat.set("Баланс CAPTCHA сервиса: %s" % balance)
 
     def start_process(self):
@@ -837,7 +846,7 @@ class MainWindow:
             self.status_bar.set("В процессе...")
             return
 
-        steamreg.set_captcha_service()
+        steamregger.set_captcha_service()
         if not self.check_input():
             return
         self.update_clock()
@@ -1092,10 +1101,10 @@ class RegistrationThread(threading.Thread):
         login, password = None, None
         while attempts < 3:
             try:
-                login, password, email, email_password = steamreg.create_account_web(
+                login, password, email, email_password = steamregger.create_account_web(
                     email, email_password, proxy=self.proxy)
                 break
-            except LimitReached as err:
+            except LimitReachedError as err:
                 logging.error(err)
                 self.client.add_log("Достигнут лимит регистрации аккаунтов: %s. Меняю прокси..." % self.proxy)
                 self.proxy_limited += 1
@@ -1109,8 +1118,8 @@ class RegistrationThread(threading.Thread):
             self.save_unattached_account(login, password, email, email_password)
 
         try:
-            steam_client = steamreg.login(login, password, self.proxy, self.client,
-                                          pass_login_captcha=self.client.pass_login_captcha.get())
+            steam_client = steamregger.login(login, password, self.proxy, self.client,
+                                             pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
             self.client.add_log("%s: не удается авторизоваться с этого айпи" % str(self.proxy).strip("<>"))
@@ -1128,11 +1137,11 @@ class RegistrationThread(threading.Thread):
 
         if self.client.activate_profile.get():
             selection_type = self.client.selection_type.get()
-            summary = steamreg.select_profile_data(self.client.statuses, selection_type)
-            real_name = steamreg.select_profile_data(self.client.real_names, selection_type)
-            country = steamreg.select_profile_data(self.client.countries, selection_type)
-            steamreg.activate_account(steam_client, summary, real_name, country)
-            steamreg.edit_profile(steam_client)
+            summary = steamregger.select_profile_data(self.client.statuses, selection_type)
+            real_name = steamregger.select_profile_data(self.client.real_names, selection_type)
+            country = steamregger.select_profile_data(self.client.countries, selection_type)
+            steamregger.activate_account(steam_client, summary, real_name, country)
+            steamregger.edit_profile(steam_client)
             self.client.add_log("Профиль активирован: %s:%s" % (login, password))
 
         avatar = None
@@ -1152,7 +1161,7 @@ class RegistrationThread(threading.Thread):
                     pass
                 self.client.avatars.append(avatar)
 
-            steamreg.upload_avatar(steam_client, avatar)
+            steamregger.upload_avatar(steam_client, avatar)
 
         if self.client.add_money_to_account.get():
             self.add_money(login)
@@ -1340,8 +1349,8 @@ class Binder(threading.Thread):
         insert_log = self.log_wrapper(login)
         insert_log('Логинюсь в аккаунт')
         try:
-            steam_client = steamreg.mobile_login(login, password, self.proxy, email, email_password,
-                                                 pass_login_captcha=self.client.pass_login_captcha.get())
+            steam_client = steamregger.mobile_login(login, password, self.proxy, email, email_password,
+                                                    pass_login_captcha=self.client.pass_login_captcha.get())
         except AuthException as err:
             logger.error(err)
             self.client.add_log("%s: не удается авторизоваться с этого айпи" % str(self.proxy).strip("<>"))
@@ -1368,7 +1377,7 @@ class Binder(threading.Thread):
         insert_log('Номер: ' + self.number['number'])
         sms_code, mobguard_data = self.add_authenticator(insert_log, steam_client, email, email_password)
         mobguard_data['account_password'] = password
-        offer_link = steamreg.fetch_tradeoffer_link(steam_client)
+        offer_link = steamregger.fetch_tradeoffer_link(steam_client)
         self.save_attached_account(mobguard_data, account, self.number['number'], offer_link)
 
         self.counter += 1
@@ -1376,11 +1385,11 @@ class Binder(threading.Thread):
         self.client.binding_quota.set(self.client.binding_quota.get() - 1)
         if not self.client.autoreg.get() and self.client.activate_profile.get():
             selection_type = self.client.selection_type.get()
-            summary = steamreg.select_profile_data(self.client.statuses, selection_type)
-            real_name = steamreg.select_profile_data(self.client.real_names, selection_type)
-            country = steamreg.select_profile_data(self.client.countries, selection_type)
-            steamreg.activate_account(steam_client, summary, real_name, country)
-            steamreg.edit_profile(steam_client)
+            summary = steamregger.select_profile_data(self.client.statuses, selection_type)
+            real_name = steamregger.select_profile_data(self.client.real_names, selection_type)
+            country = steamregger.select_profile_data(self.client.countries, selection_type)
+            steamregger.activate_account(steam_client, summary, real_name, country)
+            steamregger.edit_profile(steam_client)
             self.client.add_log("Профиль активирован: %s:%s" % (login, password))
         insert_log('Guard успешно привязан')
         self.binded_counter += 1
@@ -1389,26 +1398,26 @@ class Binder(threading.Thread):
         self.client.accounts_binded.append(login + ":" + password)
 
     def add_authenticator(self, insert_log, steam_client, email, email_password):
-        steamreg.is_phone_attached(steam_client)
+        steamregger.is_phone_attached(steam_client)
         insert_log('Делаю 3 попытки установить Guard...')
         while True:
-            success = steamreg.addphone_request(steam_client, self.number['number'])
+            success = steamregger.addphone_request(steam_client, self.number['number'])
             if not success:
                 insert_log("прокси забанен Steam-ом")
                 self.set_proxy()
                 continue
             break
         insert_log('Отправляю запрос на получение почты')
-        success = steamreg.fetch_email_code(email, email_password, steam_client)
+        success = steamregger.fetch_email_code(email, email_password, steam_client)
         if not success:
             raise SteamAuthError("Не удается получить письмо")
-        success = steamreg.email_confirmation(steam_client)
+        success = steamregger.email_confirmation(steam_client)
         if not success:
             raise SteamAuthError("Не удалсоь подтвердить почту")
 
         insert_log('Делаю запрос Steam на добавление аутентификатора...')
-        mobguard_data = steamreg.add_authenticator_request(steam_client)
-        steamreg.is_phone_attached(steam_client)
+        mobguard_data = steamregger.add_authenticator_request(steam_client)
+        steamregger.is_phone_attached(steam_client)
         insert_log('Жду SMS код до 2 минут...')
         attempts = 0
         sms_code = None
@@ -1437,7 +1446,7 @@ class Binder(threading.Thread):
                 attempts += 1
                 continue
             insert_log("SMS получено: %s" % sms_code)
-            success = steamreg.checksms_request(steam_client, sms_code)
+            success = steamregger.checksms_request(steam_client, sms_code)
             if not success:
                 insert_log("Код неверен. Пробую снова запросить sms код")
                 attempts += 1
@@ -1522,17 +1531,11 @@ class Binder(threading.Thread):
 if __name__ == '__main__':
     root = Tk()
     window = MainWindow(root)
+    
+    steamregger = SteamRegger(window)
+
     root.iconbitmap('database/app.ico')
     root.title('Steam Auto Authenticator v.3')
     root.protocol("WM_DELETE_WINDOW", window.app_quit)
     root.mainloop()
-    steamreg = SteamRegger(window)
-
-    logging.getLogger("requests").setLevel(logging.ERROR)
-    logger = logging.getLogger(__name__)
-    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
-    handler = logging.FileHandler('database/logs.txt', 'w', encoding='utf-8')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
     

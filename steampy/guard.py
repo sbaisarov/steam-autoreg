@@ -14,7 +14,7 @@ logger = logging.getLogger('__main__')
 
 
 def load_steam_guard(steam_guard: str) -> dict:
-    with open(steam_guard, 'r') as f:
+    with open(steam_guard, 'r') as file:
         return json.loads(file.read())
 
 
@@ -52,7 +52,7 @@ def fetch_emailauth(email, email_password, imap_host):
     server = imaplib.IMAP4_SSL(imap_host)
     server.login(email, email_password)
     server.select()
-    result, data = server.uid("search", None, '(HEADER Subject "Access from new web or mobile device")')
+    result, data = server.uid("search", "", '(HEADER Subject "Access from new web or mobile device")')
     uid = str(data[1][0].split()[-1])
     result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
     mail = data[1][0][1].decode('utf-8')

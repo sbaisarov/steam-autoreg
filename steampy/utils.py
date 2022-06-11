@@ -59,7 +59,10 @@ def fetch_email_code(email, email_passwd, login_name, subject):
                 print(msgnums[0])
                 print(msgnums[0].split()[-1])
                 if msgnums[0]:
-                    mail_body = server.fetch(msgnums[0].split()[-1], '(UID BODY[TEXT])')[1][0][1].decode('utf-8')
+                    mail_body = server.fetch(msgnums[0].split()[-1], '(UID BODY[TEXT])')[1][0]
+                    if mail_body is not None:
+                        # noinspection PyUnresolvedReferences
+                        mail_body = mail_body[1].decode('utf-8')
                     if login_name in mail_body:
                         break
                 server.select()
@@ -85,8 +88,8 @@ def text_between(text: str, begin: str, end: str) -> str:
     try:
         start = text.index(begin) + len(begin)
     except ValueError as err:
-        print(err)
         print(text)
+        raise err
     end = text.index(end, start)
     return text[start:end]
 
@@ -106,11 +109,11 @@ def price_to_float(price: str) -> float:
 
 
 def merge_items_with_descriptions_from_inventory(inventory_response: dict, game: GameOptions) -> dict:
-    inventory = inventory_response['rgInventory']
+    inventory: dict = inventory_response['rgInventory']
     if isinstance(inventory, list):
         inventory = dict(inventory)
     descriptions = inventory_response['rgDescriptions']
-    return merge_items(inventory.values(), descriptions, context_id=game.context_id)
+    return merge_items(list(inventory.values()), descriptions, context_id=game.context_id)
 
 
 def merge_items_with_descriptions_from_offers(offers_response: dict) -> dict:
@@ -155,7 +158,7 @@ def update_session(client):
                  client.mafile)
 
 
-def convert_edomain_to_imap(email_domain, additional_hosts={}):
+def convert_edomain_to_imap(email_domain, additional_hosts=None):
     host = None
     domains_and_hosts = {
         "imap.yandex.ru": ["yandex.ru"],
@@ -166,10 +169,11 @@ def convert_edomain_to_imap(email_domain, additional_hosts={}):
         "imap-mail.outlook.com": ["outlook.com", "hotmail.com"],
         "imap.aol.com": ["aol.com", ]
     }
+
     for imap_host, domains in additional_hosts.items():
         try:
             list(map(lambda domain: domains_and_hosts[imap_host].append(domain), domains))
-        except:
+        except (KeyError, TypeError):
             domains_and_hosts[imap_host] = domains
     for host, domains in domains_and_hosts.items():
         if email_domain in domains:
