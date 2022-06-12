@@ -708,7 +708,7 @@ class MainWindow:
             proxy_type = self.proxy_type.get()
 
             if proxy_type in (int(Proxy.Url), int(Proxy.File)):
-                state = NORMAL
+                state = DISABLED
 
             load_proxy_bttn.config(state=state)
             load_proxy_list_bttn.config(state=state)
