@@ -29,7 +29,7 @@ class SteamAuthError(Exception): pass
 class RuCaptchaError(Exception): pass
 
 
-class LimitReachedError(Exception): pass
+class LimitReached(Exception): pass
 
 
 class InvalidEmail(Exception): pass
@@ -38,7 +38,7 @@ class InvalidEmail(Exception): pass
 class AddPhoneError(Exception): pass
 
 
-class SteamRegger:
+class Controller:
 
     def __init__(self, client):
         self.client = client
@@ -473,7 +473,7 @@ class SteamRegger:
         if resp['success'] == 17:
             raise InvalidEmail("Данный почтовый адрес не поддерживается Steam")
         if resp['success'] != 1:
-            raise LimitReachedError("Превышено количество попыток подтверждения почты")
+            raise LimitReached
 
         creationid = resp['sessionid']
         time.sleep(10)  # wait some time until email has been received
@@ -528,7 +528,7 @@ class SteamRegger:
     def generate_credential(start, end, uppercase=True):
         char_sets = [string.ascii_lowercase, string.digits, string.ascii_uppercase]
         random.shuffle(char_sets)
-        credential = "".join(map(lambda x: ''.join((random.choice(x)
+        credential = ''.join(map(lambda x: ''.join((random.choice(x)
                                                     for _ in range(random.randint(start, end)))), char_sets))
         if not uppercase:
             credential = credential.lower()
@@ -540,9 +540,9 @@ class SteamRegger:
         elif domain == "COMMUNITY":
             url = 'https://steamcommunity.com/login/rendercaptcha/?gid={}'
         else:
-            raise Exception("Wrong domain")
+            raise Exception("WRONG domain")
         captcha_img = self.request_get(session, url.format(gid), timeout=30).content
-        captcha_id = self.captcha_service._generate_captcha_img(captcha_img)
+        captcha_id = self.captcha_service.generate_captcha_img(captcha_img)
         return captcha_id
 
     def activate_account(self, steam_client, summary, real_name, country):
@@ -690,8 +690,9 @@ class RuCaptcha:
         if host is None:
             host = "rucaptcha.com"
         else:
-            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
-        host = "http://" + host + "/%s"
+            host = re.search(r"(?:https?://)?(.+)/?", host)
+            if host is not None:
+                host = "http://" + host.group(1) + "/%s"
         self.host = host
         self.api_key = api_key
 
@@ -766,7 +767,7 @@ class AntiCaptcha(AnticaptchaClient):
     def get_balance(self):
         return self.getBalance()
 
-    def _generate_captcha_img(self, captcha_img):
+    def generate_captcha_img(self, captcha_img):
         task = ImageToTextTask(io.BytesIO(captcha_img))
         job = self.createTask(task)
         return job
@@ -780,7 +781,7 @@ class AntiCaptcha(AnticaptchaClient):
     @staticmethod
     def resolve_captcha(job):
         job.join()
-        status, price = job._last_result["status"], job._last_result["cost"]
+        status, price = job.last_result["status"], job._last_result["cost"]
         try:
             solution = job.get_solution_response()  # ReCaptcha
         except KeyError:
