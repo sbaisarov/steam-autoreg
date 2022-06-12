@@ -704,11 +704,11 @@ class MainWindow:
     def deploy_proxy_widget(self):
         def set_state():
             # set states of buttons
-            state = NORMAL
+            state = DISABLED
             proxy_type = self.proxy_type.get()
 
-            if proxy_type in (Proxy.Url, Proxy.File):
-                state = DISABLED
+            if proxy_type in (int(Proxy.Url), int(Proxy.File)):
+                state = NORMAL
 
             load_proxy_bttn.config(state=state)
             load_proxy_list_bttn.config(state=state)
@@ -732,7 +732,7 @@ class MainWindow:
         rbttn2.grid(column=0, row=4, padx=5, pady=5, sticky=W)
 
         load_proxy_list_bttn = Button(top, state=DISABLED, text="Загрузить", command=lambda: self.proxy_list_open(top),
-                                      relief=GROOVE, variable=self.proxy_type, value=int(Proxy.Url))
+                                      relief=GROOVE)
         load_proxy_list_bttn.grid(column=0, row=5, padx=10, pady=5, sticky=W)
 
         rbttn3 = Radiobutton(top, command=set_state, text="Загрузить свои прокси:", variable=self.proxy_type,
@@ -740,7 +740,7 @@ class MainWindow:
         rbttn3.grid(column=0, row=6, padx=5, pady=5, sticky=W)
 
         load_proxy_bttn = Button(top, state=DISABLED, text="Загрузить", command=lambda: self.proxy_open(top),
-                                 relief=GROOVE, variable=self.proxy_type, value=int(Proxy.File))
+                                 relief=GROOVE)
         load_proxy_bttn.grid(column=0, row=7, padx=10, pady=5, sticky=W)
 
         rbttn4 = Radiobutton(top, command=set_state, text="Не использовать прокси", variable=self.proxy_type, value=0)
