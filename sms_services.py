@@ -14,13 +14,13 @@ logger = logging.getLogger('__main__')
 
 class OnlineSimApi:
 
-    def __init__(self, api_key, host):
+    def __init__(self, api_key, host="onlinesim.ru"):
         self.api_key = api_key
-        if not host:
-            host = "onlinesim.ru"
-        else:
-            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
-        self.base_url = "http://" + host + "/%s"
+        host = re.search(r"(?:https?://)?(.+)/?", host)
+        if host is not None:
+            host.group(1).rstrip("/")
+        assert isinstance(host, str)
+        self.base_url = "https://" + host + "/%s"
 
     def _request_new_number(self, country):
         url = self.base_url % 'api/getNum.php'
@@ -112,12 +112,12 @@ class OnlineSimApi:
 
 class SmsActivateApi:
 
-    def __init__(self, api_key, host):
+    def __init__(self, api_key, host="sms-activate.ru"):
         self.api_key = api_key
-        if not host:
-            host = "sms-activate.ru"
-        else:
-            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
+        host = re.search(r"(?:https?://)?(.+)/?", host)
+        if host is not None:
+            host = host.group(1).rstrip("/")
+        assert isinstance(host, str)
         self.base_url = "http://" + host + "/stubs/handler_api.php"
 
     def get_number_status(self):
@@ -173,9 +173,12 @@ class SmsActivateApi:
                                                    'action': 'getStatus',
                                                    'id': token}, timeout=10)
         logger.info('Ответ от sms-activate на запрос получить статус: ' + resp.text)
+        sms_code = None
         try:
             status, delimeter, smscode_msg = resp.text.partition(':')
-            sms_code = re.search(r'\d+', smscode_msg).group()
+            sms_code_msg = re.search(r'\d+', smscode_msg)
+            if sms_code_msg is not None:
+                sms_code = sms_code_msg.group(1)
         except AttributeError:
             sms_code = ''
 

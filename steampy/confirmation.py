@@ -120,10 +120,10 @@ class ConfirmationExecutor:
         raise ConfirmationExpected
 
     @staticmethod
-    def _get_confirmation_trade_offer_id(confirmation_details_page: str) -> str:
+    def _get_confirmation_trade_offer_id(confirmation_details_page: str):
         soup = BeautifulSoup(confirmation_details_page, 'html.parser')
         full_offer_id = soup.select('.tradeoffer')[0]['id']
-        return full_offer_id.split('_')[1]
+        return full_offer_id.split('_')[1]  # type: ignore
 
 
 class ConfirmationExpected(Exception):

@@ -6,6 +6,7 @@ import datetime
 import logging
 from typing import List
 from imaplib import IMAP4, IMAP4_SSL
+from xml.dom.minidom import Attr
 
 
 class GameOptions(enum.Enum):
@@ -61,8 +62,7 @@ def fetch_email_code(email, email_passwd, login_name, subject):
                 if msgnums[0]:
                     mail_body = server.fetch(msgnums[0].split()[-1], '(UID BODY[TEXT])')[1][0]
                     if mail_body is not None:
-                        # noinspection PyUnresolvedReferences
-                        mail_body = mail_body[1].decode('utf-8')
+                        mail_body = mail_body[1].decode('utf-8')  # type: ignore
                     if login_name in mail_body:
                         break
                 server.select()
@@ -71,7 +71,9 @@ def fetch_email_code(email, email_passwd, login_name, subject):
 
             if not mail_body:
                 raise Exception('The email with the steam guard code was not found.')
-            guard_code = re.search(regexpr, mail_body).group(1).rstrip()
+            guard_code = re.search(regexpr, mail_body)
+            if guard_code is not None:
+                guard_code = guard_code.group(1).rstrip()
             print('Email found, guard code:', guard_code)
             return guard_code
         except (IMAP4.abort, IMAP4.error, ConnectionResetError) as err:
@@ -84,7 +86,7 @@ def fetch_email_code_tempmail():
     pass
 
 
-def text_between(text: str, begin: str, end: str) -> str:
+def text_between(text: str, begin: str, end) -> str:
     try:
         start = text.index(begin) + len(begin)
     except ValueError as err:
@@ -158,7 +160,7 @@ def update_session(client):
                  client.mafile)
 
 
-def convert_edomain_to_imap(email_domain, additional_hosts=None):
+def convert_edomain_to_imap(email_domain, additional_hosts={}):
     host = None
     domains_and_hosts = {
         "imap.yandex.ru": ["yandex.ru"],

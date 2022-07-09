@@ -56,7 +56,9 @@ def fetch_emailauth(email, email_password, imap_host):
     uid = str(data[1][0].split()[-1])
     result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
     mail = data[1][0][1].decode('utf-8')
-    emailauth = re.search(r'Here is the Steam Guard code you need to login to account .+:\s+(\w{5})\s', mail).group(1)
+    emailauth = re.search(r'Here is the Steam Guard code you need to login to account .+:\s+(\w{5})\s', mail) or None
+    if emailauth is not None:
+        emailauth.group(1)
     logger.info("EMAILAUTH: %s", emailauth)
 
     return emailauth

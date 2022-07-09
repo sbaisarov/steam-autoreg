@@ -38,8 +38,8 @@ class LoginExecutor:
         return login_response
 
     def _send_login_request(self, mobile_request=False):
-        one_time_code = ''
-        emailauth = ''
+        one_time_code = None
+        emailauth = None
         second_attempt = False
         attempts = 0
         response = None
@@ -104,15 +104,15 @@ class LoginExecutor:
 
         rsa_exp = int(key_response['publickey_exp'], 16)
         rsa_timestamp = key_response['timestamp']
-        return {'rsa_key': rsa.key.PublicKey(rsa_mod, rsa_exp),
+        return {'rsa_key': rsa.PublicKey(rsa_mod, rsa_exp),
                 'rsa_timestamp': rsa_timestamp}
 
     def _encrypt_password(self, rsa_params: dict) -> bytes:
         return base64.b64encode(
-            rsa.pkcs1.encrypt(self.password.encode('utf-8'), rsa_params['rsa_key']))
+            rsa.encrypt(self.password.encode('utf-8'), rsa_params['rsa_key']))
 
-    def _prepare_login_request_data(self, encrypted_password: bytes, rsa_timestamp: str,
-                                    one_time_code: str, emailauth: str) -> dict:
+    def _prepare_login_request_data(self, encrypted_password, rsa_timestamp,
+                                    one_time_code, emailauth) -> dict:
         return {
             'password': encrypted_password,
             'username': self.username,
