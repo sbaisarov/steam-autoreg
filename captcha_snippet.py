@@ -59,16 +59,10 @@ def confirm_email(session, gid, captcha_text, email):
 
 def main():
     session = Session()
-    api_key = "57a13e679aa1817a1669fca25d677fe9"  # твой ключ RuCaptcha
-    proxy = { 
-        "socks5": "socks5://sashafrank500:0d18dfe3@5.61.56.223:26691"  # твой прокси
-    }
-    session.proxies.update(proxy)
     session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
     rucaptcha = RuCaptcha("57a13e679aa1817a1669fca25d677fe9")
-    rucaptcha.api_key = api_key
     session.headers.update({'Host': 'store.steampowered.com'})
     response = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1', timeout=30).json()
     gid, sitekey = response['gid'], response['sitekey']
@@ -80,8 +74,8 @@ def main():
     creationid = confirm_email(session, gid, token, email)
     print(creationid)
     data = {
-        'accountname': "sheswallowedburningeggs",  # логин для стим аккаунта
-        'password': "asdgfdd4783",  # пароль для стим аккаунта
+        'accountname': "sheswallowedburni9890s",  # логин для стим аккаунта
+        'password': "asdgfdш77d4783",  # пароль для стим аккаунта
         'count': '32',
         'lt': '0',
         'creation_sessionid': creationid

@@ -46,7 +46,7 @@ class SteamRegger:
         self.sucessfull_captchas_counter = 0
         self.captchas_expenses_total = 0
 
-        self.captcha_service = None
+        self.captcha_service = self.set_captcha_service()
 
         self.counters_db = shelve.open("database/tmplcounters", writeback=True)
 
@@ -58,9 +58,11 @@ class SteamRegger:
         api_key = self.client.captcha_api_key.get()
         captcha_host = self.client.captcha_host.get()
         if self.client.captcha_service_type.get() == CaptchaService.RuCaptcha:
-            self.captcha_service = RuCaptcha(api_key, captcha_host)
+            return RuCaptcha(api_key, captcha_host)
         elif self.client.captcha_service_type.get() == CaptchaService.AntiCaptcha:
-            self.captcha_service = AntiCaptcha(api_key, captcha_host)
+            return AntiCaptcha(api_key, captcha_host)
+        else:
+            return RuCaptcha(api_key, captcha_host)
 
     @staticmethod
     def request_post(session, url, data=None, headers=None, timeout=30):
@@ -115,7 +117,7 @@ class SteamRegger:
             except CaptchaRequired as err:
                 if pass_login_captcha:
                     raise err
-                captcha_gid = err
+                captcha_gid = err.args[0]
                 captcha_id = self.generate_captcha(steam_client.session, captcha_gid, 'COMMUNITY')
                 captcha_text = self.resolve_captcha(captcha_id)
                 self.failed_captchas_counter += 1
@@ -156,7 +158,7 @@ class SteamRegger:
             except CaptchaRequired as err:
                 if pass_login_captcha:
                     raise err
-                captcha_gid = err
+                captcha_gid = err.args[0]
                 captcha_id = self.generate_captcha(steam_client.session, captcha_gid, 'COMMUNITY')
                 captcha_text = self.resolve_captcha(captcha_id)
 
@@ -213,16 +215,16 @@ class SteamRegger:
             result, data = server.uid('search', '', 'ALL')
             uid = data[0].split()[-1]
             result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
-            try:
-                mail = data[0][1].decode('utf-8')
-                link = re.search(r'https://.+ConfirmEmailForAdd.+?"', mail).group()
-                link = link.rstrip('"')
-                steam_client.session.get(link)
-                success = True
-                break
-            except AttributeError:
+            mail = data[0][1].decode('utf-8')
+            link = re.search(r'https://.+ConfirmEmailForAdd.+?"', mail)
+            if link is not None:
+                link = link.group(0).rstrip()
                 time.sleep(5)
                 continue
+            steam_client.session.get(link)
+            success = True
+            break
+
         server.close()
         return success
 
@@ -380,8 +382,9 @@ class SteamRegger:
             }
             time.sleep(10)
             r = steam_client.session.post('https://steamcommunity.com/dev/registerkey', data=data)
-            key = re.search('Key: (.+)</p', r.text).group(1)
-            return key
+            key = re.search('Key: (.+)</p', r.text)
+            if key is not None:
+                return key.group(1)
 
     def create_account_web(self, email_name, email_password, login=None, password=None, proxy=None):
         session = requests.Session()
@@ -452,11 +455,8 @@ class SteamRegger:
         logger.info("Resolved captcha: %s", result)
         if result is None:
             return result
-        try:
-            status, token, price = result
-        except ValueError:
-            status, token = result
-            price = 0
+        
+        status, token, price = result
 
         self.captchas_expenses_total += float(price)
         self.client.captchas_expenses_stat.set("Потрачено на капчи: %d" % self.captchas_expenses_total)
@@ -477,7 +477,7 @@ class SteamRegger:
 
         creationid = resp['sessionid']
         time.sleep(10)  # wait some time until email has been received
-        link = self.fetch_confirmation_link(email.name, email.password, creationid)
+        link = self.client.fetch_confirmation_link(email.name, email.password, creationid)
         session.get(link)
         return creationid
 
@@ -501,8 +501,6 @@ class SteamRegger:
 
     @staticmethod
     def build_uri(proxy):
-        if not proxy:
-            return None
         protocols = {"SOCKS5", "SOCKS4", "HTTPS", "HTTP"}
         protocol = None
         for protocol in protocols:
@@ -510,10 +508,10 @@ class SteamRegger:
                 break
         if protocol is None:
             raise ProxyError("protocol couldn't be found")
-        uri = " % s://" % protocol.lower()
+        uri = "%s://" % protocol.lower()
         if proxy.login and proxy.password:
-            uri += " % s:%s@" % (proxy.login, proxy.password)
-        uri += " % s:%s" % (proxy.host, proxy.port)
+            uri += " %s:%s@" % (proxy.login, proxy.password)
+        uri += "%s:%s" % (proxy.host, proxy.port)
         return uri
 
     def check_proxy_ban(self, proxy):
@@ -542,7 +540,7 @@ class SteamRegger:
         else:
             raise Exception("Wrong domain")
         captcha_img = self.request_get(session, url.format(gid), timeout=30).content
-        captcha_id = self.captcha_service._generate_captcha_img(captcha_img)
+        captcha_id = self.captcha_service.generate_captcha_img(captcha_img)
         return captcha_id
 
     def activate_account(self, steam_client, summary, real_name, country):
@@ -614,11 +612,10 @@ class SteamRegger:
         url = 'http://steamcommunity.com/profiles/%s/tradeoffers/privacy' % steam_client.steamid
         resp = steam_client.session.get(url, timeout=30)
         regexr = r'https:\/\/steamcommunity.com\/tradeoffer\/new\/\?partner=.+&token=.+(?=" )'
-        try:
-            return re.search(regexr, resp.text).group()
-        except AttributeError as err:
-            logger.error("Failed to fetch offer link %s", err)
-            return ''
+        link = re.search(regexr, resp.text)
+        if link is not None:
+            return link.group()
+        return None
 
     def generate_password(self):
         passwd_template = self.client.passwd_template.get()
@@ -637,28 +634,6 @@ class SteamRegger:
                 return password
             time.sleep(3)
             self.client.add_log("Пароль %s слишком часто используется и поэтому не был принят" % password)
-
-    def fetch_confirmation_link(self, email, email_password, creationid):
-        server = self.authorize_email(email, email_password)
-        attempts = 0
-        while attempts < 5:
-            attempts += 1
-            result, data = server.uid('search', '', 'ALL')
-            uid = data[0].split()[-1]
-            result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
-            try:
-                mail = data[0][1].decode('utf-8')
-                link = re.search(r'(https://.+newaccountverification.+?)\r', mail).group(1)
-            except AttributeError:
-                time.sleep(5)
-                continue
-            creationid_from_link = re.search(r"creationid=(\w+)", link).group(1)
-            if creationid == creationid_from_link:
-                server.close()
-                return link
-            time.sleep(5)
-        server.close()
-        raise InvalidEmail("Не удается получить письмо от Steam")
 
     def authorize_email(self, email, email_password):
         email_domain = email.partition("@")[2]
@@ -690,7 +665,13 @@ class RuCaptcha:
         if host is None:
             host = "rucaptcha.com"
         else:
-            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
+            host = re.search(r"(?:https?://)?(.+)/?", host)
+            if host is not None:
+                host = host.group(1).rstrip("/")
+            else:
+                logger.error("Invalid host, using default")
+                host = "rucaptcha.com"
+            
         host = "http://" + host + "/%s"
         self.host = host
         self.api_key = api_key
@@ -739,11 +720,12 @@ class RuCaptcha:
                 continue
             elif 'ERROR_CAPTCHA_UNSOLVABLE' in r.text:
                 self.report_bad(captcha_id)
-                return None
+                return ""
             break
 
         self.report_good(captcha_id)
-        return r.text.split('|')
+        status, token = r.text.split('|')  # status, token OK|42312343
+        return status, token, 0
 
     def report_bad(self, captcha_id):
         requests.post(self.host % 'res.php' + '?key={}&action=reportbad&id={}'
@@ -760,13 +742,18 @@ class AntiCaptcha(AnticaptchaClient):
         if not host:
             host = "api.anti-captcha.com"
         else:
-            host = re.search(r"(?:https?://)?(.+)/?", host).group(1).rstrip("/")
+            host = re.search(r"(?:https?://)?(.+)/?", host)
+            if host is not None:
+                host = host.group(1).rstrip("/")
+            else:
+                logger.error("Invalid host, using default")
+                host = "api.anti-captcha.com"
         super().__init__(api_key, host=host)
 
     def get_balance(self):
         return self.getBalance()
 
-    def _generate_captcha_img(self, captcha_img):
+    def generate_captcha_img(self, captcha_img):
         task = ImageToTextTask(io.BytesIO(captcha_img))
         job = self.createTask(task)
         return job

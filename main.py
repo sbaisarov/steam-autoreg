@@ -10,11 +10,12 @@ from queue import Queue, Empty
 from tkinter import *
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import showwarning, askyesno, showinfo
+from typing import Any
 
 import cert_human
-import pyqiwi
 from requests.exceptions import Timeout, ConnectionError, ProxyError
 from proxybroker import Broker
+import pyqiwi
 
 from enums import *
 from sms_services import *
@@ -556,7 +557,7 @@ class MainWindow:
             Binder.total_amount = self.new_accounts_amount.get()
         for thread in threads:
             thread.start()
-        RegistrationThread.is_alive = False
+
         for thread in threads:
             thread.join()
 
@@ -587,7 +588,7 @@ class MainWindow:
             try:
                 self.check_templates()
             except ValueError as err:
-                showwarning("Ошибка в шаблоне", err, parent=self.parent)
+                showwarning("Ошибка в шаблоне", str(err), parent=self.parent)
 
             if not self.captcha_api_key.get():
                 showwarning("Ошибка", 'Не указан api ключ Captcha сервиса')
@@ -595,7 +596,7 @@ class MainWindow:
             try:
                 self.check_captcha_key()
             except Exception as err:
-                showwarning("Ошибка Captcha", err, parent=self.parent)
+                showwarning("Ошибка Captcha", str(err), parent=self.parent)
                 return False
             try:
                 if self.new_accounts_amount.get() <= 0:
@@ -922,7 +923,6 @@ class MainWindow:
             self.accounts.put(account)
             if item not in self.accounts_unbinded:
                 self.accounts_unbinded.append(item)
-        RegistrationThread.is_alive = False
 
     def email_boxes_open(self):
         dir_ = (os.path.dirname(self.email_boxes_path)
@@ -1054,8 +1054,6 @@ class RegistrationThread(threading.Thread):
 
     lock = threading.Lock()
 
-    is_alive = True
-
     def __init__(self, frame):
         super().__init__()
         self.daemon = True
@@ -1081,7 +1079,7 @@ class RegistrationThread(threading.Thread):
             except Exception as error:
                 with self.lock:
                     if not RegistrationThread.error:
-                        showwarning("Ошибка %s" % error.__class__.__name__, error)
+                        showwarning("Ошибка %s" % error.__class__.__name__, str(error))
                         logger.critical(traceback.format_exc())
                         RegistrationThread.error = True
                 return
@@ -1262,6 +1260,7 @@ class Binder(threading.Thread):
     binding_total = 0
     numbers_ordered_counter = 0
     numbers_failed_counter = 0
+    total_amount = 0
 
     error = False
 
@@ -1271,7 +1270,7 @@ class Binder(threading.Thread):
         self.amount = amount
         self.counter = self.amount
         self.sms_service = sms_service
-        self.number = None
+        self.number : Any = None
         self.proxy = None
         self.used_codes = []
 
@@ -1281,7 +1280,7 @@ class Binder(threading.Thread):
         except Exception as err:
             with self.lock:
                 if not self.error:
-                    showwarning(f"Ошибка {err.__class__.__name__}", err)
+                    showwarning(f"Ошибка {err.__class__.__name__}", str(err))
                     logger.critical(traceback.format_exc())
                     self.error = True
             if self.number:  # if the operation has successfully finished
@@ -1342,9 +1341,8 @@ class Binder(threading.Thread):
                     account = self.client.accounts.get(timeout=timeout)
                     pack.append(account)
                     amount -= 1
-                except Empty:
-                    if not RegistrationThread.is_alive:
-                        raise Empty("accounts for mobile binding have been depleted")
+                except Empty as err:
+                    self.client.add_log(("accounts for mobile binding have been depleted"))
 
     def bind_account(self, account):
         login, password, email, email_password = account.login, account.password, account.email, account.email_password

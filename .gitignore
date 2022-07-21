@@ -1,8 +1,8 @@
 __pycache__
 .idea
 .vscode
-database
 webserver
 Pipfile.lock
 *.txt
 .DS_Store
+database/tmplcounters

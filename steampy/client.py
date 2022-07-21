@@ -2,10 +2,10 @@ import enum
 import time
 import json
 import logging
-from typing import List
+from typing import Dict, List
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from steampy import guard
 from steampy.confirmation import ConfirmationExecutor
@@ -81,8 +81,8 @@ class SteamClient:
         self._session = requests.Session()
         self.isLoggedIn = False
         self.was_login_executed = False
-        self.mafile = None
-        self.login_name = None
+        self.mafile = dict()
+        self.login_name: str = ""
         self.password = None
         self.oauth = None
         self.steamid = None
@@ -159,18 +159,17 @@ class SteamClient:
         url = LoginExecutor.STORE_URL + '/logout/'
         params = {'sessionid': self.get_session_id()}
         self._session.post(url, params)
-        if self.is_session_alive(self):
+        if self.is_session_alive():
             raise Exception("Logout unsuccessful")
         self.was_login_executed = False
 
     @login_required
     def is_session_alive(self):
-        steam_login = self.login_name
         main_page_response = self._session.get(self.COMMUNITY_URL)
-        return steam_login in main_page_response.text
+        return self.login_name in main_page_response.text
 
     def api_call(self, request_method: str, interface: str, api_method: str, version: str,
-                 params: dict = None) -> requests.Response:
+                 params: dict = {}) -> requests.Response:
         url = '/'.join([self.API_URL, interface, api_method, version])
         attempts = 0
         response = None
@@ -303,25 +302,6 @@ class SteamClient:
 
         return response
 
-    def _fetch_trade_partner_id(self, trade_offer_id: str, my_steamid: str) -> str:
-        # этот метод на данный момент неактуален
-        url = 'http://steamcommunity.com/profiles/{}/tradeoffers/'.format(my_steamid)
-        offer_response_text = None
-        while True:
-            try:
-                offer_response_text = self._session.get(url, timeout=60).text
-                break
-            except requests.exceptions.ProxyError as err:
-                print(err)
-                time.sleep(3)
-                continue
-        if 'You have logged in from a new device. In order to protect the items' in offer_response_text:
-            raise SevenDaysHoldException("Account has logged in a new device and can't trade for 7 days")
-        s = BeautifulSoup(offer_response_text, 'html.parser')
-        tradeoffer_element = s.find(id='tradeofferid_' + trade_offer_id)
-        partner_id = tradeoffer_element.find(class_='playerAvatar online')['data-miniprofile']
-        return partner_id
-
     def _get_trade_offer_url(self, trade_offer_id: str) -> str:
         return self.COMMUNITY_URL + '/tradeoffer/' + trade_offer_id
 
@@ -393,7 +373,7 @@ class SteamClient:
             response = self._confirm_transaction(response['tradeofferid'])
         return response
 
-    def fetch_price(self, item_hash_name: str, game: GameOptions, currency: str = Currency.USD) -> dict:
+    def fetch_price(self, item_hash_name: str, game: GameOptions, currency: int = Currency.USD) -> dict:
         url = self.COMMUNITY_URL + '/market/priceoverview/'
         params = {'country': 'PL',
                   'currency': currency,
