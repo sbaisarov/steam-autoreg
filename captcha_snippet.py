@@ -7,8 +7,11 @@ from steampy.login import LoginExecutor
 from controller import InvalidEmail, RuCaptcha
 
 
+rucaptcha = RuCaptcha("57a13e679aa1817a1669fca25d677fe9")
+
+
 def authorize_email(email, email_password):
-    email_domain = email.partition("@")[2]
+    email_domain = re.search(r"@(.+$)", email).group(1)
     imap_host = convert_edomain_to_imap(email_domain,  LoginExecutor.IMAP_HOSTS)
 
     if imap_host is None:
@@ -24,7 +27,7 @@ def fetch_confirmation_link(email, email_password, creationid):
     attempts = 0
     while attempts < 5:
         attempts += 1
-        result, data = server.uid('search', '', 'ALL')
+        typ, data = server.search(None, 'ALL')
         uid = data[0].split()[-1]
         result, data = server.uid("fetch", uid, '(UID BODY[TEXT])')
         mail = data[0][1].decode('utf-8')
@@ -42,39 +45,41 @@ def fetch_confirmation_link(email, email_password, creationid):
     raise InvalidEmail("Не удается получить письмо от Steam")
 
 
-def confirm_email(session, gid, captcha_text, email):
-    data = {
-        'captcha_text': captcha_text,
-        'captchagid': gid,
-        'email': email
-    }
-    resp = session.post('https://store.steampowered.com/join/ajaxverifyemail', data=data).json()
-    creationid = resp['sessionid']
-    time.sleep(10)  # wait some time until email has been received
-    email_name, email_password = email.partition("@")
-    link = fetch_confirmation_link(email_name, email_password, creationid)
-    session.get(link)
-    return creationid
+def confirm_email(session, gid, token, email: str, sitekey):
+    email_name, _, email_password = email.partition(":")
+    while True:
+        data = {
+            'captcha_text': token,
+            'captchagid': gid,
+            'email': email_name
+        }
+        resp = session.post('https://store.steampowered.com/join/ajaxverifyemail', data=data).json()
+        creationid = resp['sessionid']
+        if not creationid:
+            captcha_id = rucaptcha.generate_recaptcha(sitekey)
+            token = rucaptcha.resolve_captcha(captcha_id)
+            continue
 
+        time.sleep(10)  # wait some time until email has been received
+        link = fetch_confirmation_link(email_name, email_password, creationid)
+        session.get(link)
+        return creationid
 
+0
 def main():
     session = Session()
     session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36'),
                             'Accept-Language': 'q=0.8,en-US;q=0.6,en;q=0.4'})
-    rucaptcha = RuCaptcha("57a13e679aa1817a1669fca25d677fe9")
     session.headers.update({'Host': 'store.steampowered.com'})
     response = session.get('https://store.steampowered.com/join/refreshcaptcha/?count=1', timeout=30).json()
     gid, sitekey = response['gid'], response['sitekey']
     captcha_id = rucaptcha.generate_recaptcha(sitekey)
-    print(captcha_id)
     token = rucaptcha.resolve_captcha(captcha_id)
-    print(token)
-    email = "shamilbaysarov@yandex.ru:viga9982"  # твоя почта
-    creationid = confirm_email(session, gid, token, email)
-    print(creationid)
+    email = "awdasdwadawd@yandex.ru:viga9982"  # твоя почта
+    creationid = confirm_email(session, gid, token, email, sitekey)
     data = {
-        'accountname': "sheswallowedburni9890s",  # логин для стим аккаунта
+        'accountname': "rtuyrturtyr",  # логин для стим аккаунта
         'password': "asdgfdш77d4783",  # пароль для стим аккаунта
         'count': '32',
         'lt': '0',

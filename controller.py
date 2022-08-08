@@ -630,14 +630,17 @@ class Controller:
 class RuCaptcha:
 
     def __init__(self, api_key, host="rucaptcha.com"):
-        host = re.search(r"(?:https?://)?(.+)/?", host) or host
-        if host is not None:
-            host = "http://" + host.group(1) + f"/{host}"
-        self.host = host
+        if host != "rucaptcha.com":
+            host = re.search(r"(?:https?://)?(.+)/?", host)
+            if host is None:
+                raise Exception("Не удалось получить домен рукапчи")
+            host = host.group(1)
+   
+        self.host = f"http://{host}"
         self.api_key = api_key
 
     def get_balance(self):
-        resp = requests.post(self.host % 'res.php',
+        resp = requests.post(self.host + '/res.php',
                              data={'key': self.api_key,
                                    'action': 'getbalance'})
         logger.info(resp.text)
@@ -649,7 +652,7 @@ class RuCaptcha:
         return resp.text
 
     def generate_captcha_img(self, captcha_img):
-        resp = requests.post(self.host % 'in.php',
+        resp = requests.post(self.host + '/in.php',
                              files={'file': ('captcha', captcha_img, 'image/png')},
                              data={'key': self.api_key},
                              timeout=30)
@@ -658,10 +661,11 @@ class RuCaptcha:
         return captcha_id
 
     def generate_recaptcha(self, sitekey):
-        resp = requests.post(self.host % 'in.php',
+        resp = requests.post(self.host + '/in.php',
                              params={'key': self.api_key, 'method': 'userrecaptcha', 'googlekey': sitekey,
-                                     'version': 'enterprise', 'action': 'verify', 'min_score': 0.3,
-                                     'pageurl': 'https://store.steampowered.com/join/refreshcaptcha/?count=1'
+                                     'enterprise': 1, 'action': 'verify', 'min_score': 0.3,
+                                     'pageurl': 'https://store.steampowered.com/join/refreshcaptcha/?count=1',
+                                     'version': 'v3'
                                      },
                              timeout=30)
         captcha_id = resp.text.partition('|')[2]
@@ -670,7 +674,7 @@ class RuCaptcha:
     def resolve_captcha(self, captcha_id):
         while True:
             time.sleep(5)
-            r = requests.post(self.host % 'res.php',
+            r = requests.post(self.host + '/res.php',
                               params={
                                   'action': 'get', 'key': self.api_key, 'id': captcha_id
                                   },
@@ -687,20 +691,24 @@ class RuCaptcha:
         return r.text.split('|')
 
     def report_bad(self, captcha_id):
-        requests.post(self.host % 'res.php' + '?key={}&action=reportbad&id={}'
+        requests.post(self.host + '/res.php' + '?key={}&action=reportbad&id={}'
                       .format(self.api_key, captcha_id), timeout=30)
 
     def report_good(self, captcha_id):
-        requests.post(self.host % 'res.php' + '?key={}&action=reportgood&id={}'
+        requests.post(self.host + '/res.php' + '?key={}&action=reportgood&id={}'
                       .format(self.api_key, captcha_id), timeout=30)
 
 
 class AntiCaptcha(AnticaptchaClient):
 
     def __init__(self, api_key, host="api.anti-captcha.com"):
-        host = re.search(r"(?:https?://)?(.+)/?", host) or host
-        if host is not None:
-            host = "http://" + host.group(1) + f"/{host}"
+        if host != "rucaptcha.com":
+            host = re.search(r"(?:https?://)?(.+)/?", host)
+            if host is None:
+                raise Exception("Не удалось получить домен рукапчи")
+            host = "http://" + host.group(1)
+        self.host = host
+        self.api_key = api_key
         super().__init__(api_key, host=host)
 
     def get_balance(self):
