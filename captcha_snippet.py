@@ -65,7 +65,7 @@ def confirm_email(session, gid, token, email: str, sitekey):
         session.get(link)
         return creationid
 
-0
+
 def main():
     session = Session()
     session.headers.update({'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
